@@ -9,6 +9,16 @@
     <h1>Secure Document Sharing System</h1>
     <p>Flask app is running.</p>
 
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
     <nav>
         <a href="/">Home</a> |
         <a href="/login">Login</a> |
