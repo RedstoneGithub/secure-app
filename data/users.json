@@ -1,1 +1,12 @@
-[]
+[
+    {
+        "id": "u1",
+        "username": "MangoCat",
+        "email": "nlahiri@something.com",
+        "password_hash": "$2b$12$vMZsWEIbmiM5uaLmzb14Oe0r46SpovgA5T/kUWOt9bRN7UPzSIW1.",
+        "role": "user",
+        "failed_attempts": 0,
+        "locked_until": null,
+        "created_at": 1774309685.9530885
+    }
+]

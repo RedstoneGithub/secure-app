@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 import json
 import os
 import time
@@ -48,14 +48,42 @@ def validate_password(password):
     return True
 
 
+def find_user_by_username(username):
+    users = load_users()
+    for user in users:
+        if user["username"].lower() == username.lower():
+            return user
+    return None
+
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-@app.route("/login")
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    return "<h1>Login page coming soon</h1>"
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        user = find_user_by_username(username)
+
+        if not user:
+            flash("Invalid username or password.")
+            return redirect(url_for("login"))
+
+        if bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session["role"] = user["role"]
+
+            flash("Login successful.")
+            return redirect(url_for("dashboard"))
+        else:
+            flash("Invalid username or password.")
+            return redirect(url_for("login"))
+
+    return render_template("login.html")
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -119,8 +147,17 @@ def register():
 
 @app.route("/dashboard")
 def dashboard():
-    return "<h1>Dashboard coming soon</h1>"
+    if "user_id" not in session:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
 
+    return render_template("dashboard.html", username=session.get("username"))
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("You have been logged out.")
+    return redirect(url_for("home"))
 
 if __name__ == "__main__":
     app.run(debug=True)

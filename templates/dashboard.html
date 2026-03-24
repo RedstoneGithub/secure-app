@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Document Sharing System</title>
+    <title>Dashboard</title>
 </head>
 <body>
-    <h1>Secure Document Sharing System</h1>
+    <h1>Dashboard</h1>
 
     {% with messages = get_flashed_messages() %}
         {% if messages %}
@@ -18,13 +18,11 @@
         {% endif %}
     {% endwith %}
 
-    {% if session.username %}
-        <p>You are logged in as {{ session.username }}.</p>
-        <a href="/dashboard">Dashboard</a> |
+    <p>Welcome, {{ username }}!</p>
+
+    <nav>
+        <a href="/">Home</a> |
         <a href="/logout">Logout</a>
-    {% else %}
-        <a href="/login">Login</a> |
-        <a href="/register">Register</a>
-    {% endif %}
+    </nav>
 </body>
 </html>
