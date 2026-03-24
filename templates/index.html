@@ -18,13 +18,9 @@
         {% endif %}
     {% endwith %}
 
-    {% if session.username %}
-        <p>You are logged in as {{ session.username }}.</p>
-        <a href="/dashboard">Dashboard</a> |
-        <a href="/logout">Logout</a>
-    {% else %}
-        <a href="/login">Login</a> |
-        <a href="/register">Register</a>
-    {% endif %}
+    <a href="/login">Login</a> |
+    <a href="/register">Register</a> |
+    <a href="/dashboard">Dashboard</a> |
+    <a href="/logout">Logout</a>
 </body>
 </html>

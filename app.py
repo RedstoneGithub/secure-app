@@ -4,6 +4,7 @@ import os
 import time
 import re
 import bcrypt
+import secrets
 
 
 app = Flask(__name__)
@@ -55,6 +56,79 @@ def find_user_by_username(username):
             return user
     return None
 
+SESSIONS_FILE = "data/sessions.json"
+
+
+def load_sessions():
+    if not os.path.exists(SESSIONS_FILE):
+        return {}
+
+    with open(SESSIONS_FILE, "r") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+
+def save_sessions(sessions):
+    with open(SESSIONS_FILE, "w") as f:
+        json.dump(sessions, f, indent=4)
+
+
+def update_user(updated_user):
+    users = load_users()
+    for i, user in enumerate(users):
+        if user["id"] == updated_user["id"]:
+            users[i] = updated_user
+            break
+    save_users(users)
+    
+def create_session(user):
+    sessions = load_sessions()
+    token = secrets.token_urlsafe(32)
+
+    sessions[token] = {
+        "user_id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "created_at": time.time(),
+        "last_activity": time.time()
+    }
+
+    save_sessions(sessions)
+    return token
+
+
+def destroy_session(token):
+    sessions = load_sessions()
+    if token in sessions:
+        del sessions[token]
+        save_sessions(sessions)
+
+
+def get_current_session():
+    token = session.get("session_token")
+    if not token:
+        return None
+
+    sessions = load_sessions()
+    session_data = sessions.get(token)
+
+    if not session_data:
+        return None
+
+    # 30 minute timeout
+    if time.time() - session_data["last_activity"] > 1800:
+        destroy_session(token)
+        session.clear()
+        return None
+
+    session_data["last_activity"] = time.time()
+    sessions[token] = session_data
+    save_sessions(sessions)
+
+    return session_data
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -72,15 +146,34 @@ def login():
             flash("Invalid username or password.")
             return redirect(url_for("login"))
 
+        # Check if account is locked
+        if user["locked_until"] is not None and time.time() < user["locked_until"]:
+            flash("Account is locked. Try again later.")
+            return redirect(url_for("login"))
+
         if bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            session["role"] = user["role"]
+            # Reset failed attempts
+            user["failed_attempts"] = 0
+            user["locked_until"] = None
+            update_user(user)
+
+            # Create JSON-backed session
+            token = create_session(user)
+            session["session_token"] = token
 
             flash("Login successful.")
             return redirect(url_for("dashboard"))
+
         else:
-            flash("Invalid username or password.")
+            user["failed_attempts"] += 1
+
+            if user["failed_attempts"] >= 5:
+                user["locked_until"] = time.time() + (15 * 60)
+                flash("Account locked due to too many failed login attempts.")
+            else:
+                flash("Invalid username or password.")
+
+            update_user(user)
             return redirect(url_for("login"))
 
     return render_template("login.html")
@@ -147,14 +240,20 @@ def register():
 
 @app.route("/dashboard")
 def dashboard():
-    if "user_id" not in session:
+    current_session = get_current_session()
+
+    if not current_session:
         flash("Please log in first.")
         return redirect(url_for("login"))
 
-    return render_template("dashboard.html", username=session.get("username"))
+    return render_template("dashboard.html", username=current_session["username"])
 
 @app.route("/logout")
 def logout():
+    token = session.get("session_token")
+    if token:
+        destroy_session(token)
+
     session.clear()
     flash("You have been logged out.")
     return redirect(url_for("home"))
