@@ -5,12 +5,61 @@ import time
 import re
 import bcrypt
 import secrets
+import logging
+from datetime import datetime
 
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "dev-secret-change-this-later"
 USERS_FILE = "data/users.json"
 
+
+
+class SecurityLogger:
+    def __init__(self, log_file='logs/security.log'):
+        os.makedirs('logs', exist_ok=True)
+        self.logger = logging.getLogger('security')
+        self.logger.setLevel(logging.INFO)
+        if not self.logger.handlers:
+            handler = logging.FileHandler(log_file)
+            handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            self.logger.addHandler(handler)
+
+    def log_event(self, event_type, user_id, details, severity='INFO'):
+        entry = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'event_type': event_type,
+            'user_id': user_id,
+            'ip_address': request.remote_addr,
+            'details': details
+        }
+        msg = json.dumps(entry)
+        if severity == 'CRITICAL':
+            self.logger.critical(msg)
+        elif severity == 'ERROR':
+            self.logger.error(msg)
+        elif severity == 'WARNING':
+            self.logger.warning(msg)
+        else:
+            self.logger.info(msg)
+
+
+security_log = SecurityLogger()
+
+# Tracks login attempts per IP: {ip: [timestamp, ...]}
+login_attempts = {}
+
+def is_rate_limited(ip):
+    now = time.time()
+    attempts = login_attempts.get(ip, [])
+    # Keep only attempts within the last 60 seconds
+    attempts = [t for t in attempts if now - t < 60]
+    login_attempts[ip] = attempts
+    if len(attempts) >= 10:
+        return True
+    attempts.append(now)
+    login_attempts[ip] = attempts
+    return False
 
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -137,30 +186,37 @@ def home():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        ip = request.remote_addr
+        if is_rate_limited(ip):
+            security_log.log_event('RATE_LIMITED', None, {'ip': ip}, 'WARNING')
+            flash("Too many login attempts. Please wait a minute.")
+            return redirect(url_for("login"))
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
         user = find_user_by_username(username)
 
         if not user:
+            security_log.log_event('LOGIN_FAILED', None, {'username': username, 'reason': 'User not found'}, 'WARNING')
             flash("Invalid username or password.")
             return redirect(url_for("login"))
 
         # Check if account is locked
         if user["locked_until"] is not None and time.time() < user["locked_until"]:
+            security_log.log_event('LOGIN_BLOCKED', user["id"], {'username': username, 'reason': 'Account locked'}, 'WARNING')
             flash("Account is locked. Try again later.")
             return redirect(url_for("login"))
 
         if bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
-            # Reset failed attempts
             user["failed_attempts"] = 0
             user["locked_until"] = None
             update_user(user)
 
-            # Create JSON-backed session
             token = create_session(user)
             session["session_token"] = token
 
+            security_log.log_event('LOGIN_SUCCESS', user["id"], {'username': username})
             flash("Login successful.")
             return redirect(url_for("dashboard"))
 
@@ -169,14 +225,17 @@ def login():
 
             if user["failed_attempts"] >= 5:
                 user["locked_until"] = time.time() + (15 * 60)
+                security_log.log_event('ACCOUNT_LOCKED', user["id"], {'username': username, 'reason': '5 failed login attempts'}, 'ERROR')
                 flash("Account locked due to too many failed login attempts.")
             else:
+                security_log.log_event('LOGIN_FAILED', user["id"], {'username': username, 'reason': 'Invalid password'}, 'WARNING')
                 flash("Invalid username or password.")
 
             update_user(user)
             return redirect(url_for("login"))
 
     return render_template("login.html")
+
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -257,6 +316,27 @@ def logout():
     session.clear()
     flash("You have been logged out.")
     return redirect(url_for("home"))
+
+@app.after_request
+def set_security_headers(response):
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
+
+
 
 if __name__ == "__main__":
     app.run(debug=True)
