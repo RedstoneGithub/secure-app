@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Share Document</title>
+</head>
+<body>
+    <h1>Share: {{ document.filename }}</h1>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <nav>
+        <a href="/documents">Back to Documents</a> |
+        <a href="/">Home</a>
+    </nav>
+
+    <hr>
+
+    <!-- Share with a user -->
+    <h2>Share With User</h2>
+    <form method="POST" action="/documents/share/{{ document.id }}">
+        <label>Username:</label><br>
+        <input type="text" name="username" required><br><br>
+
+        <label>Role:</label><br>
+        <select name="role">
+            <option value="viewer">Viewer (read-only)</option>
+            <option value="editor">Editor (can upload new versions)</option>
+        </select><br><br>
+
+        <button type="submit">Share</button>
+    </form>
+
+    <hr>
+
+    <!-- Current Access -->
+    <h2>Current Access</h2>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>User</th>
+            <th>Role</th>
+            <th>Actions</th>
+        </tr>
+        <tr>
+            <td>{{ document.owner }}</td>
+            <td>owner</td>
+            <td>—</td>
+        </tr>
+        {% for share in shares %}
+            <tr>
+                <td>{{ share.username }}</td>
+                <td>{{ share.role }}</td>
+                <td>
+                    <form method="POST" action="/documents/revoke/{{ document.id }}" style="display:inline;">
+                        <input type="hidden" name="username" value="{{ share.username }}">
+                        <button type="submit">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

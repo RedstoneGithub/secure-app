@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Version History</title>
+</head>
+<body>
+    <h1>Version History: {{ document.filename }}</h1>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <nav>
+        <a href="/documents">Back to Documents</a> |
+        <a href="/">Home</a>
+    </nav>
+
+    <hr>
+
+    <!-- Upload New Version (owner/editor only) -->
+    {% if can_edit %}
+        <h2>Upload New Version</h2>
+        <form method="POST" action="/documents/upload-version/{{ document.id }}" enctype="multipart/form-data">
+            <label>File:</label><br>
+            <input type="file" name="file" required><br><br>
+            <button type="submit">Upload New Version</button>
+        </form>
+        <hr>
+    {% endif %}
+
+    <!-- Version List -->
+    <h2>Versions</h2>
+    {% if versions %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Version</th>
+                <th>Uploaded By</th>
+                <th>Uploaded At</th>
+                <th>Size</th>
+                <th>Actions</th>
+            </tr>
+            {% for v in versions %}
+                <tr>
+                    <td>v{{ v.version }}</td>
+                    <td>{{ v.uploaded_by }}</td>
+                    <td>{{ v.uploaded_at }}</td>
+                    <td>{{ v.size }}</td>
+                    <td>
+                        <a href="/documents/download/{{ document.id }}?version={{ v.version }}">Download</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No version history available.</p>
+    {% endif %}
+
+    <hr>
+
+    <!-- Audit Trail for this document -->
+    <h2>Audit Trail</h2>
+    {% if audit_log %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Details</th>
+            </tr>
+            {% for entry in audit_log %}
+                <tr>
+                    <td>{{ entry.timestamp }}</td>
+                    <td>{{ entry.user }}</td>
+                    <td>{{ entry.action }}</td>
+                    <td>{{ entry.details }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No audit trail for this document.</p>
+    {% endif %}
+</body>
+</html>

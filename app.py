@@ -1,8 +1,10 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, send_file, url_for, flash, session
+from cryptography.fernet import Fernet
 import json
 import os
 import time
 import re
+import uuid
 import bcrypt
 import secrets
 import logging
@@ -13,7 +15,32 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "dev-secret-change-this-later"
 USERS_FILE = "data/users.json"
 
+class EncryptedStorage:
+    def __init__(self, key_file='secret.key'):
+        # Load or generate encryption key
+        try:
+            with open(key_file, 'rb') as f:
+                self.key = f.read()
+        except FileNotFoundError:
+            self.key = Fernet.generate_key()
+            with open(key_file, 'wb') as f:
+                f.write(self.key)
 
+        self.cipher = Fernet(self.key)
+        
+    def save_encrypted(self, filename, data):
+        """Save encrypted JSON data"""
+        json_data = json.dumps(data)
+        encrypted = self.cipher.encrypt(json_data.encode())
+
+        with open(filename, 'wb') as f:
+            f.write(encrypted)
+    def load_encrypted(self, filename):
+        """Load and decrypt JSON data"""
+        with open(filename, 'rb') as f:
+            encrypted = f.read()
+            decrypted = self.cipher.decrypt(encrypted)
+            return json.loads(decrypted.decode())
 
 class SecurityLogger:
     def __init__(self, log_file='logs/security.log'):
@@ -45,6 +72,7 @@ class SecurityLogger:
 
 
 security_log = SecurityLogger()
+encrypted_storage = EncryptedStorage()
 
 # Tracks login attempts per IP: {ip: [timestamp, ...]}
 login_attempts = {}
@@ -73,6 +101,7 @@ def load_users():
 
 
 def save_users(users):
+
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=4)
         
@@ -296,6 +325,82 @@ def register():
 
     return render_template("register.html")
 
+def get_user_documents(user_id):
+    documents = []
+    for filename in os.listdir("data"):
+        if filename.endswith(".enc"):
+            try:
+                file_data = encrypted_storage.load_encrypted(f"data/{filename}")
+                if file_data.get("user_id") == user_id:
+                    if "id" not in file_data:
+                        file_data["id"] = filename.replace(".enc", "")
+                    documents.append(file_data)
+            except Exception as e:
+                security_log.log_event('FILE_LOAD_ERROR', user_id, {'filename': filename, 'error': str(e)}, 'ERROR')
+    return documents
+
+@app.route("/documents/upload", methods=["GET", "POST"])
+def upload_document():
+    current_session = get_current_session()
+
+    if not current_session:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        # Encrypt and store the files
+        file = request.files.get("file")
+        if file:
+            doc_id = str(uuid.uuid4())
+            enc_filename = f"data/{doc_id}.enc"
+            file_data = file.read()
+            encrypted_storage.save_encrypted(enc_filename, {
+                "id": doc_id,
+                "filename": file.filename,
+                "data": file_data.decode('utf-8'),
+                "user_id": current_session["user_id"],
+                "uploaded_at": datetime.now().isoformat()
+            })
+
+            flash("File uploaded and encrypted successfully.")
+    
+    return render_template("documents.html", username=current_session["username"])
+
+@app.route("/documents/download/<doc_id>")
+def download_document(doc_id):
+    current_session = get_current_session()
+
+    if not current_session:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
+
+    # Retrieve the encrypted file by document ID
+    enc_path = f"data/{doc_id}.enc"
+    file_data = encrypted_storage.load_encrypted(enc_path)
+    if not file_data:
+        flash("File not found.")
+        return redirect(url_for("documents"))
+
+    # Return the file for download
+    from io import BytesIO
+    return send_file(
+        BytesIO(file_data["data"].encode('utf-8')),
+        as_attachment=True,
+        download_name=file_data["filename"]
+    )
+
+@app.route("/documents")
+def documents():
+    current_session = get_current_session()
+
+    if not current_session:
+        flash("Please log in first.")
+        return redirect(url_for("login"))
+
+    return render_template("documents.html", 
+        username=current_session["username"],
+        documents=get_user_documents(current_session["user_id"])
+    )
 
 @app.route("/dashboard")
 def dashboard():
@@ -338,5 +443,13 @@ def set_security_headers(response):
 
 
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(ssl_context=('cert.pem', 'key.pem'),
+        host='0.0.0.0',
+        port=5000)
+    # Force HTTPS:
+    @app.before_request
+    def require_https():
+        if not request.is_secure and app.env != "development":
+            url = request.url.replace("http://", "https://", 1)
+            return redirect(url, code=301)

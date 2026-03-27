@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Sharing</title>
+</head>
+<body>
+    <h1>Document Sharing</h1>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/dashboard">Dashboard</a> |
+        <a href="/logout">Logout</a>
+    </nav>
+
+    <hr>
+
+    <!-- Upload Document -->
+    <h2>Upload Document</h2>
+    <form method="POST" action="/documents/upload" enctype="multipart/form-data">
+        <label>File:</label><br>
+        <input type="file" name="file" required><br><br>
+        <button type="submit">Upload</button>
+    </form>
+
+    <hr>
+
+    <!-- My Documents -->
+    <h2>My Documents</h2>
+    {% if documents %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Name</th>
+                <th>Version</th>
+                <th>Uploaded</th>
+                <th>Actions</th>
+            </tr>
+            {% for doc in documents %}
+                <tr>
+                    <td>{{ doc.filename }}</td>
+                    <td>v{{ doc.version }}</td>
+                    <td>{{ doc.uploaded_at }}</td>
+                    <td>
+                        <a href="/documents/download/{{ doc.id }}">Download</a> |
+                        <a href="/documents/versions/{{ doc.id }}">Version History</a> |
+                        <a href="/documents/share/{{ doc.id }}">Share</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No documents uploaded yet.</p>
+    {% endif %}
+
+    <hr>
+
+    <!-- Shared With Me -->
+    <h2>Shared With Me</h2>
+    {% if shared_documents %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Name</th>
+                <th>Owner</th>
+                <th>My Role</th>
+                <th>Version</th>
+                <th>Actions</th>
+            </tr>
+            {% for doc in shared_documents %}
+                <tr>
+                    <td>{{ doc.filename }}</td>
+                    <td>{{ doc.owner }}</td>
+                    <td>{{ doc.role }}</td>
+                    <td>v{{ doc.version }}</td>
+                    <td>
+                        <a href="/documents/download/{{ doc.id }}">Download</a>
+                        {% if doc.role == 'editor' %}
+                            | <a href="/documents/upload-version/{{ doc.id }}">Upload New Version</a>
+                        {% endif %}
+                        | <a href="/documents/versions/{{ doc.id }}">Version History</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No documents shared with you.</p>
+    {% endif %}
+
+    <hr>
+
+    <!-- Audit Trail -->
+    <h2>Recent Activity</h2>
+    {% if audit_log %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Document</th>
+                <th>Details</th>
+            </tr>
+            {% for entry in audit_log %}
+                <tr>
+                    <td>{{ entry.timestamp }}</td>
+                    <td>{{ entry.user }}</td>
+                    <td>{{ entry.action }}</td>
+                    <td>{{ entry.document }}</td>
+                    <td>{{ entry.details }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No activity yet.</p>
+    {% endif %}
+</body>
+</html>
