@@ -89,6 +89,31 @@ def is_rate_limited(ip):
     login_attempts[ip] = attempts
     return False
 
+# --- RBAC decorators ---
+from functools import wraps
+
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not get_current_session():
+            flash("Please log in first.")
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def require_role(role):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            current = get_current_session()
+            if not current or current["role"] != role:
+                security_log.log_event('ACCESS_DENIED', current["user_id"] if current else None, {'resource': request.path, 'required_role': role}, 'WARNING')
+                return "Forbidden", 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+# --- end RBAC decorators ---
+
 def load_users():
     if not os.path.exists(USERS_FILE):
         return []
@@ -340,6 +365,7 @@ def get_user_documents(user_id):
     return documents
 
 @app.route("/documents/upload", methods=["GET", "POST"])
+@require_auth  # added: require login
 def upload_document():
     current_session = get_current_session()
 
@@ -367,6 +393,7 @@ def upload_document():
     return render_template("documents.html", username=current_session["username"])
 
 @app.route("/documents/download/<doc_id>")
+@require_auth  # added: require login
 def download_document(doc_id):
     current_session = get_current_session()
 
@@ -390,6 +417,7 @@ def download_document(doc_id):
     )
 
 @app.route("/documents")
+@require_auth  # added: require login
 def documents():
     current_session = get_current_session()
 
@@ -403,6 +431,7 @@ def documents():
     )
 
 @app.route("/dashboard")
+@require_auth  # added: require login
 def dashboard():
     current_session = get_current_session()
 
