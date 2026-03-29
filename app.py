@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, send_file, url_for, flash, session
 from cryptography.fernet import Fernet
+import base64
 import json
 import os
 import time
@@ -88,6 +89,14 @@ def is_rate_limited(ip):
     attempts.append(now)
     login_attempts[ip] = attempts
     return False
+
+
+def decode_document_bytes(file_record):
+    """Support binary-safe storage while remaining compatible with older text-only records."""
+    encoding = file_record.get("content_encoding")
+    if encoding == "base64":
+        return base64.b64decode(file_record["data"])
+    return file_record["data"].encode("utf-8")
 
 # --- RBAC decorators ---
 from functools import wraps
@@ -383,7 +392,9 @@ def upload_document():
             encrypted_storage.save_encrypted(enc_filename, {
                 "id": doc_id,
                 "filename": file.filename,
-                "data": file_data.decode('utf-8'),
+                "data": base64.b64encode(file_data).decode("ascii"),
+                "content_encoding": "base64",
+                "content_type": file.mimetype or "application/octet-stream",
                 "user_id": current_session["user_id"],
                 "uploaded_at": datetime.now().isoformat()
             })
@@ -411,9 +422,10 @@ def download_document(doc_id):
     # Return the file for download
     from io import BytesIO
     return send_file(
-        BytesIO(file_data["data"].encode('utf-8')),
+        BytesIO(decode_document_bytes(file_data)),
         as_attachment=True,
-        download_name=file_data["filename"]
+        download_name=file_data["filename"],
+        mimetype=file_data.get("content_type", "application/octet-stream")
     )
 
 @app.route("/documents")
@@ -471,14 +483,16 @@ def set_security_headers(response):
     return response
 
 
+@app.before_request
+def require_https():
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    is_https = request.is_secure or forwarded_proto == "https"
+    if not is_https and not app.debug and not app.testing:
+        url = request.url.replace("http://", "https://", 1)
+        return redirect(url, code=301)
+
 
 if __name__ == '__main__':
     app.run(ssl_context=('cert.pem', 'key.pem'),
         host='0.0.0.0',
         port=5000)
-    # Force HTTPS:
-    @app.before_request
-    def require_https():
-        if not request.is_secure and app.env != "development":
-            url = request.url.replace("http://", "https://", 1)
-            return redirect(url, code=301)
