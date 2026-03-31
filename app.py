@@ -13,7 +13,12 @@ from datetime import datetime
 
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "dev-secret-change-this-later"
+# SECRET_KEY loaded from environment variable — never hardcode this
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+# Secure session cookie flags
+app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot access the cookie
+app.config["SESSION_COOKIE_SECURE"] = True     # HTTPS only
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"  # CSRF protection
 USERS_FILE = "data/users.json"
 
 class EncryptedStorage:
@@ -373,6 +378,20 @@ def get_user_documents(user_id):
                 security_log.log_event('FILE_LOAD_ERROR', user_id, {'filename': filename, 'error': str(e)}, 'ERROR')
     return documents
 
+# --- File upload validation added here ---
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'docx', 'png', 'jpg', 'jpeg'}
+ALLOWED_MIME_TYPES = {
+    'application/pdf', 'text/plain',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/png', 'image/jpeg'
+}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+def allowed_file(filename, mimetype):
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    return ext in ALLOWED_EXTENSIONS and mimetype in ALLOWED_MIME_TYPES
+# --- end file upload validation ---
+
 @app.route("/documents/upload", methods=["GET", "POST"])
 @require_auth  # added: require login
 def upload_document():
@@ -386,9 +405,19 @@ def upload_document():
         # Encrypt and store the files
         file = request.files.get("file")
         if file:
+            # Validate extension and MIME type
+            if not allowed_file(file.filename, file.mimetype):
+                security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'mimetype': file.mimetype, 'reason': 'Invalid file type'}, 'WARNING')
+                flash("File type not allowed. Allowed types: pdf, txt, docx, png, jpg, jpeg.")
+                return redirect(url_for("upload_document"))
+            # Validate file size
+            file_data = file.read()
+            if len(file_data) > MAX_FILE_SIZE:
+                security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'reason': 'File too large'}, 'WARNING')
+                flash("File too large. Maximum size is 10 MB.")
+                return redirect(url_for("upload_document"))
             doc_id = str(uuid.uuid4())
             enc_filename = f"data/{doc_id}.enc"
-            file_data = file.read()
             encrypted_storage.save_encrypted(enc_filename, {
                 "id": doc_id,
                 "filename": file.filename,
@@ -399,8 +428,9 @@ def upload_document():
                 "uploaded_at": datetime.now().isoformat()
             })
 
+            security_log.log_event('FILE_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id})
             flash("File uploaded and encrypted successfully.")
-    
+
     return render_template("documents.html", username=current_session["username"])
 
 @app.route("/documents/download/<doc_id>")
@@ -412,8 +442,22 @@ def download_document(doc_id):
         flash("Please log in first.")
         return redirect(url_for("login"))
 
+    # Path traversal prevention — ensure doc_id is a plain UUID with no path characters
+    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
+        security_log.log_event('PATH_TRAVERSAL_ATTEMPT', current_session["user_id"], {'doc_id': doc_id}, 'WARNING')
+        return "Bad request", 400
+
     # Retrieve the encrypted file by document ID
-    enc_path = f"data/{doc_id}.enc"
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir):
+        security_log.log_event('PATH_TRAVERSAL_ATTEMPT', current_session["user_id"], {'doc_id': doc_id}, 'WARNING')
+        return "Bad request", 400
+
+    if not os.path.exists(enc_path):
+        flash("File not found.")
+        return redirect(url_for("documents"))
+
     file_data = encrypted_storage.load_encrypted(enc_path)
     if not file_data:
         flash("File not found.")
