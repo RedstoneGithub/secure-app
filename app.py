@@ -365,14 +365,19 @@ def register():
     return render_template("register.html")
 
 def get_user_documents(user_id):
+    # Returns all docs the user owns or has been shared with
     documents = []
     for filename in os.listdir("data"):
         if filename.endswith(".enc"):
             try:
                 file_data = encrypted_storage.load_encrypted(f"data/{filename}")
-                if file_data.get("user_id") == user_id:
+                is_owner = file_data.get("user_id") == user_id
+                is_shared = user_id in file_data.get("shared_with", {})
+                if is_owner or is_shared:
                     if "id" not in file_data:
                         file_data["id"] = filename.replace(".enc", "")
+                    # Attach the user's role for use in templates
+                    file_data["user_role"] = "owner" if is_owner else file_data["shared_with"][user_id]
                     documents.append(file_data)
             except Exception as e:
                 security_log.log_event('FILE_LOAD_ERROR', user_id, {'filename': filename, 'error': str(e)}, 'ERROR')
@@ -425,7 +430,8 @@ def upload_document():
                 "content_encoding": "base64",
                 "content_type": file.mimetype or "application/octet-stream",
                 "user_id": current_session["user_id"],
-                "uploaded_at": datetime.now().isoformat()
+                "uploaded_at": datetime.now().isoformat(),
+                "shared_with": {}  # {user_id: "editor" or "viewer"}
             })
 
             security_log.log_event('FILE_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id})
@@ -463,7 +469,17 @@ def download_document(doc_id):
         flash("File not found.")
         return redirect(url_for("documents"))
 
+    # Check access — must be owner or editor (viewers cannot download)
+    user_id = current_session["user_id"]
+    is_owner = file_data.get("user_id") == user_id
+    shared_role = file_data.get("shared_with", {}).get(user_id)
+    if not is_owner and shared_role != "editor":
+        security_log.log_event('ACCESS_DENIED', user_id, {'doc_id': doc_id, 'reason': 'Insufficient document role'}, 'WARNING')
+        flash("You do not have permission to download this file.")
+        return redirect(url_for("documents"))
+
     # Return the file for download
+    security_log.log_event('FILE_DOWNLOADED', user_id, {'filename': file_data["filename"], 'doc_id': doc_id})
     from io import BytesIO
     return send_file(
         BytesIO(decode_document_bytes(file_data)),
@@ -471,6 +487,56 @@ def download_document(doc_id):
         download_name=file_data["filename"],
         mimetype=file_data.get("content_type", "application/octet-stream")
     )
+
+@app.route("/documents/share/<doc_id>", methods=["POST"])
+@require_auth  # added: require login — share a document with another user
+def share_document(doc_id):
+    current_session = get_current_session()
+
+    # Validate doc_id format
+    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir) or not os.path.exists(enc_path):
+        flash("Document not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+
+    # Only the owner can share
+    if file_data.get("user_id") != current_session["user_id"]:
+        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'doc_id': doc_id, 'reason': 'Only owner can share'}, 'WARNING')
+        flash("Only the document owner can share it.")
+        return redirect(url_for("documents"))
+
+    target_username = request.form.get("username", "").strip()
+    role = request.form.get("role", "viewer")
+
+    if role not in ("editor", "viewer"):
+        flash("Invalid role. Choose editor or viewer.")
+        return redirect(url_for("documents"))
+
+    target_user = find_user_by_username(target_username)
+    if not target_user:
+        flash(f"User '{target_username}' not found.")
+        return redirect(url_for("documents"))
+
+    if target_user["id"] == current_session["user_id"]:
+        flash("You cannot share a document with yourself.")
+        return redirect(url_for("documents"))
+
+    # Update shared_with and save
+    if "shared_with" not in file_data:
+        file_data["shared_with"] = {}
+    file_data["shared_with"][target_user["id"]] = role
+    encrypted_storage.save_encrypted(enc_path, file_data)
+
+    security_log.log_event('DOCUMENT_SHARED', current_session["user_id"], {'doc_id': doc_id, 'shared_with': target_user["id"], 'role': role})
+    flash(f"Document shared with {target_username} as {role}.")
+    return redirect(url_for("documents"))
+
 
 @app.route("/documents")
 @require_auth  # added: require login

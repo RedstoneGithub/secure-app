@@ -38,23 +38,32 @@
 
     <!-- My Documents -->
     <h2>My Documents</h2>
-    {% if documents %}
+    {% set owned = documents | selectattr("user_role", "equalto", "owner") | list %}
+    {% if owned %}
         <table border="1" cellpadding="5">
             <tr>
                 <th>Name</th>
-                <th>Version</th>
                 <th>Uploaded</th>
                 <th>Actions</th>
+                <th>Share</th>
             </tr>
-            {% for doc in documents %}
+            {% for doc in owned %}
                 <tr>
                     <td>{{ doc.filename }}</td>
-                    <td>v{{ doc.version }}</td>
                     <td>{{ doc.uploaded_at }}</td>
                     <td>
-                        <a href="/documents/download/{{ doc.id }}">Download</a> |
-                        <a href="/documents/versions/{{ doc.id }}">Version History</a> |
-                        <a href="/documents/share/{{ doc.id }}">Share</a>
+                        <a href="/documents/download/{{ doc.id }}">Download</a>
+                    </td>
+                    <td>
+                        <!-- Share form — POST to /documents/share/<doc_id> -->
+                        <form method="POST" action="/documents/share/{{ doc.id }}" style="display:inline;">
+                            <input type="text" name="username" placeholder="Username" required>
+                            <select name="role">
+                                <option value="viewer">Viewer</option>
+                                <option value="editor">Editor</option>
+                            </select>
+                            <button type="submit">Share</button>
+                        </form>
                     </td>
                 </tr>
             {% endfor %}
@@ -67,27 +76,24 @@
 
     <!-- Shared With Me -->
     <h2>Shared With Me</h2>
-    {% if shared_documents %}
+    {% set shared = documents | rejectattr("user_role", "equalto", "owner") | list %}
+    {% if shared %}
         <table border="1" cellpadding="5">
             <tr>
                 <th>Name</th>
-                <th>Owner</th>
                 <th>My Role</th>
-                <th>Version</th>
                 <th>Actions</th>
             </tr>
-            {% for doc in shared_documents %}
+            {% for doc in shared %}
                 <tr>
                     <td>{{ doc.filename }}</td>
-                    <td>{{ doc.owner }}</td>
-                    <td>{{ doc.role }}</td>
-                    <td>v{{ doc.version }}</td>
+                    <td>{{ doc.user_role }}</td>
                     <td>
-                        <a href="/documents/download/{{ doc.id }}">Download</a>
-                        {% if doc.role == 'editor' %}
-                            | <a href="/documents/upload-version/{{ doc.id }}">Upload New Version</a>
+                        {% if doc.user_role == "editor" %}
+                            <a href="/documents/download/{{ doc.id }}">Download</a>
+                        {% else %}
+                            <em>View only</em>
                         {% endif %}
-                        | <a href="/documents/versions/{{ doc.id }}">Version History</a>
                     </td>
                 </tr>
             {% endfor %}
