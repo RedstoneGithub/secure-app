@@ -623,6 +623,61 @@ def documents():
         documents=get_user_documents(current_session["user_id"])
     )
 
+# --- Admin routes added here ---
+@app.route("/admin/dashboard")
+@require_auth
+@require_role('admin')
+def admin_dashboard():
+    current_session = get_current_session()
+    all_users = load_users()
+
+    # Load all documents across all users
+    all_documents = []
+    for filename in os.listdir("data"):
+        if filename.endswith(".enc"):
+            try:
+                doc = encrypted_storage.load_encrypted(f"data/{filename}")
+                all_documents.append(doc)
+            except Exception as e:
+                security_log.log_event('FILE_LOAD_ERROR', current_session["user_id"], {'filename': filename, 'error': str(e)}, 'ERROR')
+
+    security_log.log_event('ADMIN_DASHBOARD_ACCESS', current_session["user_id"], {})
+    return render_template("admin.html",
+        username=current_session["username"],
+        users=all_users,
+        documents=all_documents,
+        now=time.time()
+    )
+
+
+@app.route("/admin/users/<user_id>/lock", methods=["POST"])
+@require_auth
+@require_role('admin')
+def admin_lock_user(user_id):
+    current_session = get_current_session()
+    users = load_users()
+
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        flash("User not found.")
+        return redirect(url_for("admin_dashboard"))
+
+    action = request.form.get("action")
+    if action == "lock":
+        target["locked_until"] = time.time() + (15 * 60)
+        security_log.log_event('ADMIN_USER_LOCKED', current_session["user_id"], {'target_user': user_id}, 'WARNING')
+        flash(f"User {target['username']} has been locked.")
+    elif action == "unlock":
+        target["locked_until"] = None
+        target["failed_attempts"] = 0
+        security_log.log_event('ADMIN_USER_UNLOCKED', current_session["user_id"], {'target_user': user_id})
+        flash(f"User {target['username']} has been unlocked.")
+
+    save_users(users)
+    return redirect(url_for("admin_dashboard"))
+# --- end admin routes ---
+
+
 @app.route("/dashboard")
 @require_auth  # added: require login
 def dashboard():

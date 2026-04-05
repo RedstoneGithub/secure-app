@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+</head>
+<body>
+    <h1>Admin Dashboard</h1>
+    <p>Logged in as: {{ username }}</p>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/dashboard">Dashboard</a> |
+        <a href="/documents">Documents</a> |
+        <a href="/logout">Logout</a>
+    </nav>
+
+    <hr>
+
+    <!-- All Users -->
+    <h2>All Users</h2>
+    {% if users %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Failed Attempts</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+            {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.email }}</td>
+                    <td>{{ user.role }}</td>
+                    <td>{{ user.failed_attempts }}</td>
+                    <td>
+                        {% if user.locked_until and user.locked_until > now %}
+                            Locked
+                        {% else %}
+                            Active
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user.locked_until and user.locked_until > now %}
+                            <form method="POST" action="/admin/users/{{ user.id }}/lock" style="display:inline;">
+                                <input type="hidden" name="action" value="unlock">
+                                <button type="submit">Unlock</button>
+                            </form>
+                        {% else %}
+                            <form method="POST" action="/admin/users/{{ user.id }}/lock" style="display:inline;">
+                                <input type="hidden" name="action" value="lock">
+                                <button type="submit">Lock</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No users found.</p>
+    {% endif %}
+
+    <hr>
+
+    <!-- All Documents -->
+    <h2>All Documents</h2>
+    {% if documents %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>ID</th>
+                <th>Filename</th>
+                <th>Owner ID</th>
+                <th>Version</th>
+                <th>Uploaded At</th>
+                <th>Shared With</th>
+            </tr>
+            {% for doc in documents %}
+                <tr>
+                    <td>{{ doc.id }}</td>
+                    <td>{{ doc.filename }}</td>
+                    <td>{{ doc.user_id }}</td>
+                    <td>v{{ doc.version if doc.version else 1 }}</td>
+                    <td>{{ doc.uploaded_at }}</td>
+                    <td>{{ doc.shared_with | length if doc.shared_with else 0 }} user(s)</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No documents found.</p>
+    {% endif %}
+</body>
+</html>
