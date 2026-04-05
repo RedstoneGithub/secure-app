@@ -52,7 +52,9 @@
                     <td>{{ doc.filename }}</td>
                     <td>{{ doc.uploaded_at }}</td>
                     <td>
-                        <a href="/documents/download/{{ doc.id }}">Download</a>
+                        <a href="/documents/download/{{ doc.id }}">Download</a> |
+                        <a href="/documents/versions/{{ doc.id }}">Version History</a>
+                        (v{{ doc.version if doc.version else 1 }})
                     </td>
                     <td>
                         <!-- Share form — POST to /documents/share/<doc_id> -->

@@ -421,21 +421,55 @@ def upload_document():
                 security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'reason': 'File too large'}, 'WARNING')
                 flash("File too large. Maximum size is 10 MB.")
                 return redirect(url_for("upload_document"))
-            doc_id = str(uuid.uuid4())
-            enc_filename = f"data/{doc_id}.enc"
-            encrypted_storage.save_encrypted(enc_filename, {
-                "id": doc_id,
-                "filename": file.filename,
-                "data": base64.b64encode(file_data).decode("ascii"),
-                "content_encoding": "base64",
-                "content_type": file.mimetype or "application/octet-stream",
-                "user_id": current_session["user_id"],
-                "uploaded_at": datetime.now().isoformat(),
-                "shared_with": {}  # {user_id: "editor" or "viewer"}
-            })
+            # Check if a doc with the same filename already exists (for versioning)
+            existing_doc = None
+            existing_enc_path = None
+            for fname in os.listdir("data"):
+                if fname.endswith(".enc"):
+                    try:
+                        d = encrypted_storage.load_encrypted(f"data/{fname}")
+                        if d.get("user_id") == current_session["user_id"] and d.get("filename") == file.filename:
+                            existing_doc = d
+                            existing_enc_path = f"data/{fname}"
+                            break
+                    except Exception:
+                        pass
 
-            security_log.log_event('FILE_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id})
-            flash("File uploaded and encrypted successfully.")
+            if existing_doc:
+                # Add current data as a previous version
+                versions = existing_doc.get("versions", [])
+                versions.append({
+                    "version": existing_doc.get("version", 1),
+                    "data": existing_doc["data"],
+                    "uploaded_at": existing_doc["uploaded_at"],
+                    "uploaded_by": existing_doc["user_id"]
+                })
+                existing_doc["data"] = base64.b64encode(file_data).decode("ascii")
+                existing_doc["uploaded_at"] = datetime.now().isoformat()
+                existing_doc["version"] = existing_doc.get("version", 1) + 1
+                existing_doc["versions"] = versions
+                encrypted_storage.save_encrypted(existing_enc_path, existing_doc)
+                doc_id = existing_doc["id"]
+                security_log.log_event('FILE_VERSION_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id, 'version': existing_doc["version"]})
+                flash(f"New version (v{existing_doc['version']}) uploaded successfully.")
+            else:
+                # Brand new document
+                doc_id = str(uuid.uuid4())
+                enc_filename = f"data/{doc_id}.enc"
+                encrypted_storage.save_encrypted(enc_filename, {
+                    "id": doc_id,
+                    "filename": file.filename,
+                    "data": base64.b64encode(file_data).decode("ascii"),
+                    "content_encoding": "base64",
+                    "content_type": file.mimetype or "application/octet-stream",
+                    "user_id": current_session["user_id"],
+                    "uploaded_at": datetime.now().isoformat(),
+                    "shared_with": {},  # {user_id: "editor" or "viewer"}
+                    "version": 1,
+                    "versions": []  # stores previous versions
+                })
+                security_log.log_event('FILE_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id})
+                flash("File uploaded and encrypted successfully.")
 
     return render_template("documents.html", username=current_session["username"])
 
@@ -536,6 +570,43 @@ def share_document(doc_id):
     security_log.log_event('DOCUMENT_SHARED', current_session["user_id"], {'doc_id': doc_id, 'shared_with': target_user["id"], 'role': role})
     flash(f"Document shared with {target_username} as {role}.")
     return redirect(url_for("documents"))
+
+
+# --- Version history route added here ---
+@app.route("/documents/versions/<doc_id>")
+@require_auth
+def document_versions(doc_id):
+    current_session = get_current_session()
+
+    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir) or not os.path.exists(enc_path):
+        flash("Document not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+
+    # Must be owner or shared user to view versions
+    user_id = current_session["user_id"]
+    is_owner = file_data.get("user_id") == user_id
+    is_shared = user_id in file_data.get("shared_with", {})
+    if not is_owner and not is_shared:
+        security_log.log_event('ACCESS_DENIED', user_id, {'doc_id': doc_id, 'reason': 'Not authorized to view versions'}, 'WARNING')
+        flash("You do not have access to this document.")
+        return redirect(url_for("documents"))
+
+    versions = file_data.get("versions", [])
+    return render_template("versions.html",
+        filename=file_data["filename"],
+        current_version=file_data.get("version", 1),
+        current_uploaded_at=file_data["uploaded_at"],
+        versions=versions,
+        doc_id=doc_id
+    )
+# --- end version history route ---
 
 
 @app.route("/documents")

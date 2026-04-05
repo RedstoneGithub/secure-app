@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Version History - {{ filename }}</title>
+</head>
+<body>
+    <h1>Version History: {{ filename }}</h1>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <ul>
+                {% for message in messages %}
+                    <li>{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/dashboard">Dashboard</a> |
+        <a href="/documents">My Documents</a> |
+        <a href="/logout">Logout</a>
+    </nav>
+
+    <hr>
+
+    <h2>Current Version</h2>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>Version</th>
+            <th>Uploaded At</th>
+            <th>Actions</th>
+        </tr>
+        <tr>
+            <td>v{{ current_version }}</td>
+            <td>{{ current_uploaded_at }}</td>
+            <td><a href="/documents/download/{{ doc_id }}">Download</a></td>
+        </tr>
+    </table>
+
+    <hr>
+
+    <h2>Previous Versions</h2>
+    {% if versions %}
+        <table border="1" cellpadding="5">
+            <tr>
+                <th>Version</th>
+                <th>Uploaded At</th>
+            </tr>
+            {% for v in versions | reverse %}
+                <tr>
+                    <td>v{{ v.version }}</td>
+                    <td>{{ v.uploaded_at }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No previous versions.</p>
+    {% endif %}
+</body>
+</html>
