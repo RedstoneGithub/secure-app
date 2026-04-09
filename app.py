@@ -345,12 +345,16 @@ def register():
         # Hash password
         hashed_password = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
+        # Allow guest registration — guests get read-only access
+        requested_role = request.form.get("role", "user")
+        role = "guest" if requested_role == "guest" else "user"
+
         new_user = {
             "id": f"u{len(users) + 1}",
             "username": username,
             "email": email,
             "password_hash": hashed_password,
-            "role": "user",
+            "role": role,
             "failed_attempts": 0,
             "locked_until": None,
             "created_at": time.time()
@@ -405,6 +409,12 @@ def upload_document():
     if not current_session:
         flash("Please log in first.")
         return redirect(url_for("login"))
+
+    # Guests cannot upload documents
+    if current_session["role"] == "guest":
+        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'resource': '/documents/upload', 'reason': 'Guest role cannot upload'}, 'WARNING')
+        flash("Guest accounts cannot upload documents.")
+        return redirect(url_for("documents"))
 
     if request.method == "POST":
         # Encrypt and store the files
@@ -481,6 +491,12 @@ def download_document(doc_id):
     if not current_session:
         flash("Please log in first.")
         return redirect(url_for("login"))
+
+    # Guests cannot download documents
+    if current_session["role"] == "guest":
+        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'resource': f'/documents/download/{doc_id}', 'reason': 'Guest role cannot download'}, 'WARNING')
+        flash("Guest accounts cannot download documents.")
+        return redirect(url_for("documents"))
 
     # Path traversal prevention — ensure doc_id is a plain UUID with no path characters
     if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
@@ -618,9 +634,10 @@ def documents():
         flash("Please log in first.")
         return redirect(url_for("login"))
 
-    return render_template("documents.html", 
+    return render_template("documents.html",
         username=current_session["username"],
-        documents=get_user_documents(current_session["user_id"])
+        documents=get_user_documents(current_session["user_id"]),
+        role=current_session["role"]
     )
 
 # --- Admin routes added here ---

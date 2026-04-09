@@ -26,13 +26,17 @@
 
     <hr>
 
-    <!-- Upload Document -->
+    <!-- Upload Document — hidden for guests -->
+    {% if role != "guest" %}
     <h2>Upload Document</h2>
     <form method="POST" action="/documents/upload" enctype="multipart/form-data">
         <label>File:</label><br>
         <input type="file" name="file" required><br><br>
         <button type="submit">Upload</button>
     </form>
+    {% else %}
+    <p><em>Guest accounts cannot upload documents.</em></p>
+    {% endif %}
 
     <hr>
 
