@@ -12,14 +12,14 @@ import logging
 from datetime import datetime
 
 
+import config
+
 app = Flask(__name__)
-# SECRET_KEY loaded from environment variable — never hardcode this
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
-# Secure session cookie flags
-app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot access the cookie
-app.config["SESSION_COOKIE_SECURE"] = True     # HTTPS only
-app.config["SESSION_COOKIE_SAMESITE"] = "Strict"  # CSRF protection
-USERS_FILE = "data/users.json"
+app.config["SECRET_KEY"] = config.SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = config.SESSION_COOKIE_HTTPONLY
+app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
+app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
+USERS_FILE = config.USERS_FILE
 
 class EncryptedStorage:
     def __init__(self, key_file='secret.key'):
@@ -87,9 +87,9 @@ def is_rate_limited(ip):
     now = time.time()
     attempts = login_attempts.get(ip, [])
     # Keep only attempts within the last 60 seconds
-    attempts = [t for t in attempts if now - t < 60]
+    attempts = [t for t in attempts if now - t < config.RATE_LIMIT_WINDOW]
     login_attempts[ip] = attempts
-    if len(attempts) >= 10:
+    if len(attempts) >= config.RATE_LIMIT_MAX:
         return True
     attempts.append(now)
     login_attempts[ip] = attempts
@@ -173,7 +173,7 @@ def find_user_by_username(username):
             return user
     return None
 
-SESSIONS_FILE = "data/sessions.json"
+SESSIONS_FILE = config.SESSIONS_FILE
 
 
 def load_sessions():
@@ -235,7 +235,7 @@ def get_current_session():
         return None
 
     # 30 minute timeout
-    if time.time() - session_data["last_activity"] > 1800:
+    if time.time() - session_data["last_activity"] > config.SESSION_TIMEOUT:
         destroy_session(token)
         session.clear()
         return None
@@ -291,8 +291,8 @@ def login():
         else:
             user["failed_attempts"] += 1
 
-            if user["failed_attempts"] >= 5:
-                user["locked_until"] = time.time() + (15 * 60)
+            if user["failed_attempts"] >= config.MAX_FAILED_ATTEMPTS:
+                user["locked_until"] = time.time() + config.LOCKOUT_DURATION
                 security_log.log_event('ACCOUNT_LOCKED', user["id"], {'username': username, 'reason': '5 failed login attempts'}, 'ERROR')
                 flash("Account locked due to too many failed login attempts.")
             else:
@@ -387,19 +387,9 @@ def get_user_documents(user_id):
                 security_log.log_event('FILE_LOAD_ERROR', user_id, {'filename': filename, 'error': str(e)}, 'ERROR')
     return documents
 
-# --- File upload validation added here ---
-ALLOWED_EXTENSIONS = {'pdf', 'txt', 'docx', 'png', 'jpg', 'jpeg'}
-ALLOWED_MIME_TYPES = {
-    'application/pdf', 'text/plain',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'image/png', 'image/jpeg'
-}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-
 def allowed_file(filename, mimetype):
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    return ext in ALLOWED_EXTENSIONS and mimetype in ALLOWED_MIME_TYPES
-# --- end file upload validation ---
+    return ext in config.ALLOWED_EXTENSIONS and mimetype in config.ALLOWED_MIME_TYPES
 
 @app.route("/documents/upload", methods=["GET", "POST"])
 @require_auth  # added: require login
@@ -427,7 +417,7 @@ def upload_document():
                 return redirect(url_for("upload_document"))
             # Validate file size
             file_data = file.read()
-            if len(file_data) > MAX_FILE_SIZE:
+            if len(file_data) > config.MAX_FILE_SIZE:
                 security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'reason': 'File too large'}, 'WARNING')
                 flash("File too large. Maximum size is 10 MB.")
                 return redirect(url_for("upload_document"))
@@ -681,7 +671,7 @@ def admin_lock_user(user_id):
 
     action = request.form.get("action")
     if action == "lock":
-        target["locked_until"] = time.time() + (15 * 60)
+        target["locked_until"] = time.time() + config.LOCKOUT_DURATION
         security_log.log_event('ADMIN_USER_LOCKED', current_session["user_id"], {'target_user': user_id}, 'WARNING')
         flash(f"User {target['username']} has been locked.")
     elif action == "unlock":
@@ -744,6 +734,9 @@ def require_https():
         url = request.url.replace("http://", "https://", 1)
         return redirect(url, code=301)
 
+
+os.makedirs('data', exist_ok=True)
+os.makedirs('logs', exist_ok=True)
 
 if __name__ == '__main__':
     app.run(ssl_context=('cert.pem', 'key.pem'),
