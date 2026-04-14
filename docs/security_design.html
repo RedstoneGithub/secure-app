@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Security Design Document — CS 419</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 12pt;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 40px;
+            color: #222;
+        }
+        h1 { font-size: 22pt; border-bottom: 2px solid #333; padding-bottom: 8px; }
+        h2 { font-size: 16pt; border-bottom: 1px solid #aaa; padding-bottom: 4px; margin-top: 36px; }
+        h3 { font-size: 13pt; margin-top: 24px; }
+        h4 { font-size: 12pt; margin-top: 16px; }
+        pre {
+            background: #f4f4f4;
+            border: 1px solid #ccc;
+            padding: 12px;
+            font-size: 10pt;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+            font-size: 11pt;
+        }
+        th {
+            background: #333;
+            color: #fff;
+            padding: 8px 10px;
+            text-align: left;
+        }
+        td {
+            border: 1px solid #ccc;
+            padding: 7px 10px;
+        }
+        tr:nth-child(even) td { background: #f9f9f9; }
+        .cover {
+            text-align: center;
+            margin: 80px 0 60px 0;
+        }
+        .cover h1 { border: none; font-size: 26pt; }
+        .cover p { font-size: 13pt; color: #555; }
+        .toc li { margin: 6px 0; }
+        .section-label {
+            font-weight: bold;
+            color: #333;
+        }
+        @media print {
+            body { margin: 0; padding: 20px; }
+            h2 { page-break-before: always; }
+            h2:first-of-type { page-break-before: avoid; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Cover Page -->
+<div class="cover">
+    <h1>Security Design Document</h1>
+    <p><strong>CS 419 — Secure Web Application Project</strong></p>
+    <p>Secure Document Sharing System</p>
+    <p>Spring 2026</p>
+</div>
+
+<hr>
+
+<!-- Table of Contents -->
+<h2>Table of Contents</h2>
+<ol class="toc">
+    <li>Architecture Overview</li>
+    <li>Threat Model</li>
+    <li>Security Controls</li>
+    <li>Data Protection</li>
+</ol>
+
+<!-- Section 1 -->
+<h2>1. Architecture Overview</h2>
+
+<h3>1.1 System Architecture</h3>
+<p>The Secure Document Sharing System is a web application built using the Python/Flask framework. It follows a single-server architecture with file-based storage, eliminating the need for a database while maintaining structured data organization.</p>
+
+<pre>
+┌─────────────────────────────────────────────────────┐
+│                    CLIENT BROWSER                   │
+│         (HTML5 / CSS3 / JavaScript)                 │
+└────────────────────┬────────────────────────────────┘
+                     │ HTTPS (TLS)  Port 5000
+┌────────────────────▼────────────────────────────────┐
+│                  FLASK APPLICATION                  │
+│                                                     │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────┐  │
+│  │    Routes   │  │  Decorators  │  │  Logging  │  │
+│  │  /login     │  │ require_auth │  │ Security  │  │
+│  │  /register  │  │ require_role │  │  Logger   │  │
+│  │  /documents │  └──────────────┘  └───────────┘  │
+│  │  /admin     │                                    │
+│  └─────────────┘                                    │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐    │
+│  │           Security Middleware               │    │
+│  │  - Security Headers (@after_request)        │    │
+│  │  - HTTPS Redirect (@before_request)         │    │
+│  │  - Session Validation                       │    │
+│  │  - Rate Limiting                            │    │
+│  └─────────────────────────────────────────────┘    │
+└────────────────────┬────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────┐
+│                FILE-BASED STORAGE                   │
+│                                                     │
+│  data/                                              │
+│  ├── users.json          (plaintext JSON)           │
+│  ├── sessions.json       (plaintext JSON)           │
+│  └── uuid.enc            (Fernet encrypted)         │
+│                                                     │
+│  logs/                                              │
+│  └── security.log        (append-only log)          │
+└─────────────────────────────────────────────────────┘
+</pre>
+
+<h3>1.2 Data Flow Diagrams</h3>
+
+<h4>User Authentication Flow</h4>
+<pre>
+User → POST /login
+     → Rate limit check (10 req/min per IP)
+     → Load user from users.json
+     → Check account lock status
+     → bcrypt.checkpw(password, hash)
+     → On success: create session token → sessions.json
+     → Set secure cookie (HttpOnly, Secure, SameSite=Strict)
+     → Log event to security.log
+     → Redirect to /dashboard
+</pre>
+
+<h4>Document Upload Flow</h4>
+<pre>
+User → POST /documents/upload
+     → require_auth (session validation)
+     → Guest role check (blocked if guest)
+     → File extension + MIME type validation
+     → File size check (max 10 MB)
+     → Check for existing filename (versioning)
+     → base64 encode binary data
+     → Fernet encrypt JSON payload
+     → Write uuid.enc to data/
+     → Log FILE_UPLOADED to security.log
+</pre>
+
+<h4>Document Download Flow</h4>
+<pre>
+User → GET /documents/download/&lt;doc_id&gt;
+     → require_auth (session validation)
+     → Guest role check (blocked if guest)
+     → UUID format validation (regex)
+     → Path traversal check (os.path.abspath)
+     → Load + decrypt .enc file
+     → Check owner/editor access role
+     → Log FILE_DOWNLOADED to security.log
+     → Stream file to browser
+</pre>
+
+<h4>Document Sharing Flow</h4>
+<pre>
+Owner → POST /documents/share/&lt;doc_id&gt;
+      → require_auth (session validation)
+      → UUID format validation
+      → Verify requester is document owner
+      → Validate target username exists
+      → Validate role (editor or viewer)
+      → Update shared_with in .enc file
+      → Log DOCUMENT_SHARED to security.log
+</pre>
+
+<h3>1.3 Component Descriptions</h3>
+<table>
+    <tr><th>Component</th><th>Description</th></tr>
+    <tr><td>Flask Application</td><td>Core web framework handling routing, request processing, and template rendering</td></tr>
+    <tr><td>EncryptedStorage</td><td>Fernet-based symmetric encryption class for document files</td></tr>
+    <tr><td>SecurityLogger</td><td>Structured JSON event logger writing to logs/security.log</td></tr>
+    <tr><td>SessionManager</td><td>File-backed session management with 30-minute timeout</td></tr>
+    <tr><td>RBAC Decorators</td><td>require_auth and require_role function decorators for access control</td></tr>
+    <tr><td>Security Headers</td><td>@app.after_request middleware applying all required HTTP security headers</td></tr>
+    <tr><td>Rate Limiter</td><td>In-memory IP-based rate limiting (10 login attempts per minute)</td></tr>
+</table>
+
+<h3>1.4 Technology Stack Justification</h3>
+<table>
+    <tr><th>Technology</th><th>Justification</th></tr>
+    <tr><td>Python 3 / Flask</td><td>Lightweight, readable, strong security library ecosystem</td></tr>
+    <tr><td>bcrypt (rounds=12)</td><td>Industry-standard password hashing with configurable work factor</td></tr>
+    <tr><td>cryptography (Fernet)</td><td>Authenticated symmetric encryption — prevents tampering as well as reading</td></tr>
+    <tr><td>secrets module</td><td>Cryptographically secure token generation for sessions</td></tr>
+    <tr><td>File-based JSON storage</td><td>No database setup required per project spec; simple and auditable</td></tr>
+    <tr><td>Jinja2 templates</td><td>Auto-escaping by default prevents XSS in rendered output</td></tr>
+    <tr><td>TLS (self-signed cert)</td><td>Encrypts data in transit for development environment</td></tr>
+</table>
+
+<!-- Section 2 -->
+<h2>2. Threat Model</h2>
+
+<h3>2.1 Asset Identification</h3>
+<table>
+    <tr><th>Asset</th><th>Classification</th><th>Description</th></tr>
+    <tr><td>User credentials</td><td>Critical</td><td>Usernames, emails, bcrypt password hashes</td></tr>
+    <tr><td>Document contents</td><td>High</td><td>Encrypted files stored as .enc</td></tr>
+    <tr><td>Session tokens</td><td>High</td><td>32-byte URL-safe tokens in sessions.json</td></tr>
+    <tr><td>Encryption key</td><td>Critical</td><td>Fernet key stored in secret.key</td></tr>
+    <tr><td>Security logs</td><td>Medium</td><td>Event logs containing IP addresses and usernames</td></tr>
+    <tr><td>User metadata</td><td>Medium</td><td>Registration timestamps, roles, lock status</td></tr>
+</table>
+
+<h3>2.2 Threat Enumeration (STRIDE Model)</h3>
+<table>
+    <tr><th>Threat</th><th>Category</th><th>Description</th></tr>
+    <tr><td>Brute force login</td><td>Spoofing</td><td>Attacker repeatedly guesses passwords</td></tr>
+    <tr><td>Session hijacking</td><td>Spoofing</td><td>Attacker steals session cookie to impersonate user</td></tr>
+    <tr><td>Privilege escalation</td><td>Elevation of Privilege</td><td>User accesses admin or other user's resources</td></tr>
+    <tr><td>Path traversal</td><td>Tampering</td><td>Attacker manipulates doc_id to read arbitrary files</td></tr>
+    <tr><td>XSS injection</td><td>Tampering</td><td>Attacker injects scripts via filenames or usernames</td></tr>
+    <tr><td>File upload abuse</td><td>Tampering</td><td>Attacker uploads malicious or oversized files</td></tr>
+    <tr><td>Man-in-the-middle</td><td>Information Disclosure</td><td>Attacker intercepts HTTP traffic</td></tr>
+    <tr><td>Direct file access</td><td>Information Disclosure</td><td>Attacker reads .enc files from disk</td></tr>
+    <tr><td>Log tampering</td><td>Repudiation</td><td>Attacker modifies or deletes security logs</td></tr>
+    <tr><td>Denial of Service</td><td>Denial of Service</td><td>Attacker floods login endpoint</td></tr>
+</table>
+
+<h3>2.3 Vulnerability Assessment</h3>
+<table>
+    <tr><th>Vulnerability</th><th>Likelihood</th><th>Impact</th><th>Risk Level</th></tr>
+    <tr><td>Weak password accepted</td><td>Low</td><td>High</td><td>Medium</td></tr>
+    <tr><td>Session fixation</td><td>Low</td><td>High</td><td>Medium</td></tr>
+    <tr><td>Path traversal on download</td><td>Medium</td><td>Critical</td><td>High</td></tr>
+    <tr><td>Unvalidated file upload</td><td>Medium</td><td>High</td><td>High</td></tr>
+    <tr><td>Hardcoded SECRET_KEY</td><td>Low</td><td>Critical</td><td>High</td></tr>
+    <tr><td>Plaintext key storage (secret.key)</td><td>Medium</td><td>Critical</td><td>High</td></tr>
+    <tr><td>No CSRF token on forms</td><td>Medium</td><td>Medium</td><td>Medium</td></tr>
+    <tr><td>Debug mode enabled</td><td>Low</td><td>High</td><td>Medium</td></tr>
+</table>
+
+<h3>2.4 Attack Scenarios</h3>
+
+<h4>Scenario 1: Brute Force Login</h4>
+<p>An attacker attempts to guess a user's password by sending repeated POST requests to <code>/login</code>.</p>
+<p><strong>Mitigation:</strong> Account lockout after 5 failed attempts (15 min), rate limit of 10 requests/min per IP, bcrypt with cost factor 12 slows offline guessing.</p>
+
+<h4>Scenario 2: Path Traversal on Download</h4>
+<p>An attacker sends a request to <code>/documents/download/../data/users</code> to read the users file.</p>
+<p><strong>Mitigation:</strong> UUID regex validation rejects non-UUID doc_ids; <code>os.path.abspath</code> comparison ensures path stays within <code>data/</code>.</p>
+
+<h4>Scenario 3: Privilege Escalation</h4>
+<p>A standard user manually crafts a request to <code>/admin/dashboard</code>.</p>
+<p><strong>Mitigation:</strong> <code>@require_role('admin')</code> decorator checks session role and returns 403 with an ACCESS_DENIED log event.</p>
+
+<h4>Scenario 4: Malicious File Upload</h4>
+<p>An attacker uploads a <code>.php</code> or <code>.exe</code> file disguised with a fake extension.</p>
+<p><strong>Mitigation:</strong> Both file extension and MIME type are validated against an allowlist before the file is processed.</p>
+
+<h4>Scenario 5: Man-in-the-Middle</h4>
+<p>An attacker intercepts traffic on an HTTP connection to steal session cookies.</p>
+<p><strong>Mitigation:</strong> HTTPS enforced via TLS; <code>Strict-Transport-Security</code> header set; session cookie has <code>Secure=True</code> flag.</p>
+
+<h3>2.5 Risk Prioritization</h3>
+<table>
+    <tr><th>Priority</th><th>Risk</th><th>Status</th></tr>
+    <tr><td>1</td><td>Path traversal</td><td>Mitigated</td></tr>
+    <tr><td>2</td><td>Unvalidated file uploads</td><td>Mitigated</td></tr>
+    <tr><td>3</td><td>Brute force / credential stuffing</td><td>Mitigated</td></tr>
+    <tr><td>4</td><td>Session hijacking</td><td>Mitigated (secure cookies + HTTPS)</td></tr>
+    <tr><td>5</td><td>Privilege escalation</td><td>Mitigated (RBAC decorators)</td></tr>
+    <tr><td>6</td><td>Plaintext key storage (secret.key)</td><td>Partially mitigated</td></tr>
+    <tr><td>7</td><td>CSRF on state-changing forms</td><td>Partially mitigated (SameSite=Strict)</td></tr>
+</table>
+
+<!-- Section 3 -->
+<h2>3. Security Controls</h2>
+
+<h3>A. User Authentication (15 points)</h3>
+<p><span class="section-label">Control Description:</span> Secure user registration and login with strong password requirements and account protection mechanisms.</p>
+<p><span class="section-label">Implementation:</span></p>
+<ul>
+    <li>Passwords hashed with bcrypt (cost factor 12) — never stored in plaintext</li>
+    <li>Password requirements: minimum 12 characters, uppercase, lowercase, number, special character</li>
+    <li>Account lockout after 5 failed attempts for 15 minutes</li>
+    <li>Rate limiting: maximum 10 login attempts per IP per minute</li>
+    <li>Session token generated with <code>secrets.token_urlsafe(32)</code></li>
+</ul>
+<p><span class="section-label">Testing Methodology:</span> Attempt login with wrong password 5 times — verify account locks. Send 11 rapid requests — verify rate limit. Check users.json for bcrypt hash format (<code>$2b$12$...</code>).</p>
+<p><span class="section-label">Known Limitations:</span> Rate limiting is in-memory and resets on server restart. No multi-factor authentication.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Persist rate limit data to file. Add TOTP-based MFA for high-security accounts.</p>
+
+<h3>B. Access Control (15 points)</h3>
+<p><span class="section-label">Control Description:</span> Role-based access control (RBAC) with three roles: Admin, User, and Guest.</p>
+<p><span class="section-label">Implementation:</span></p>
+<ul>
+    <li><code>require_auth</code> decorator validates active session before any protected route</li>
+    <li><code>require_role(role)</code> decorator checks session role against required role</li>
+    <li>Admin: full access including user management and all documents</li>
+    <li>User: upload, download own/shared docs, share documents</li>
+    <li>Guest: read-only — can view document list but cannot upload or download</li>
+</ul>
+<p><span class="section-label">Testing Methodology:</span> Log in as guest and attempt upload — expect redirect. Log in as user and attempt /admin/dashboard — expect 403. Attempt to download a viewer-only shared document — expect access denied.</p>
+<p><span class="section-label">Known Limitations:</span> require_role checks exact role match — admin cannot use user-level decorators without modification.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Extend require_role to accept a list of allowed roles.</p>
+
+<h3>C. Input Validation &amp; Injection Prevention (20 points)</h3>
+<p><span class="section-label">Control Description:</span> Whitelist-based validation of all user inputs and uploaded files to prevent injection attacks.</p>
+<p><span class="section-label">Implementation:</span></p>
+<ul>
+    <li>Username: regex <code>^\w{3,20}$</code> (alphanumeric + underscore, 3-20 chars)</li>
+    <li>Email: regex format validation</li>
+    <li>Password: length + complexity requirements enforced server-side</li>
+    <li>File uploads: allowlist of extensions (pdf, txt, docx, png, jpg, jpeg) and MIME types</li>
+    <li>File size: maximum 10 MB enforced before processing</li>
+    <li>Document IDs: UUID regex rejects path traversal attempts</li>
+    <li>XSS: Jinja2 auto-escaping enabled on all template variables</li>
+    <li>Path traversal: os.path.abspath comparison keeps file access within data/</li>
+</ul>
+<p><span class="section-label">Testing Methodology:</span> Upload .exe and .php files — verify rejection. Submit &lt;script&gt;alert(1)&lt;/script&gt; as username — verify escaped output. Request /documents/download/../data/users — verify 400.</p>
+<p><span class="section-label">Known Limitations:</span> MIME type can be spoofed. No magic byte checking or malware scanning.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Use python-magic for magic byte validation. Integrate ClamAV for malware scanning.</p>
+
+<h3>D. Encryption (15 points)</h3>
+<p><span class="section-label">Control Description:</span> Encryption of data in transit (TLS) and data at rest (Fernet symmetric encryption).</p>
+<p><span class="section-label">Implementation:</span></p>
+<ul>
+    <li>Transport: TLS via self-signed certificate, Flask ssl_context</li>
+    <li>HTTPS redirect via @app.before_request</li>
+    <li>HSTS header: max-age=31536000; includeSubDomains</li>
+    <li>Data at rest: Fernet (AES-128-CBC + HMAC-SHA256) for all document files</li>
+    <li>Encryption key stored in secret.key, generated on first run</li>
+    <li>Binary data base64-encoded before encryption</li>
+</ul>
+<p><span class="section-label">Testing Methodology:</span> Open a .enc file in a text editor — verify unreadable ciphertext. Send HTTP request — verify redirect to HTTPS. Check response headers for Strict-Transport-Security.</p>
+<p><span class="section-label">Known Limitations:</span> Self-signed certificate generates browser warnings. Encryption key stored in plaintext on disk.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Use a CA-signed certificate for production. Store key in environment variable or HSM.</p>
+
+<h3>E. Session Management (15 points)</h3>
+<p><span class="section-label">Control Description:</span> Secure file-backed session management with timeout and secure cookie configuration.</p>
+<p><span class="section-label">Implementation:</span></p>
+<ul>
+    <li>Session tokens: secrets.token_urlsafe(32) — 256-bit cryptographically secure</li>
+    <li>Sessions stored in data/sessions.json with user ID, role, timestamps</li>
+    <li>30-minute inactivity timeout</li>
+    <li>Session destroyed on logout</li>
+    <li>Cookie flags: HttpOnly=True, Secure=True, SameSite=Strict</li>
+    <li>Flask SECRET_KEY loaded from environment variable</li>
+</ul>
+<p><span class="section-label">Testing Methodology:</span> Log in, wait 31 minutes, attempt dashboard access — verify redirect to login. Log out and reuse old token — verify invalid. Check cookie flags in browser DevTools.</p>
+<p><span class="section-label">Known Limitations:</span> No concurrent session detection. Sessions file grows without cleanup.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Add periodic cleanup of expired sessions. Implement single active session per user.</p>
+
+<h3>F. Security Headers (10 points)</h3>
+<p><span class="section-label">Control Description:</span> HTTP response headers instructing the browser to apply additional security policies.</p>
+<table>
+    <tr><th>Header</th><th>Value</th><th>Purpose</th></tr>
+    <tr><td>Content-Security-Policy</td><td>default-src 'self'</td><td>Restricts resource loading to same origin</td></tr>
+    <tr><td>X-Frame-Options</td><td>DENY</td><td>Prevents clickjacking via iframes</td></tr>
+    <tr><td>X-Content-Type-Options</td><td>nosniff</td><td>Prevents MIME type sniffing</td></tr>
+    <tr><td>X-XSS-Protection</td><td>1; mode=block</td><td>Legacy XSS filter for older browsers</td></tr>
+    <tr><td>Referrer-Policy</td><td>strict-origin-when-cross-origin</td><td>Limits referrer information leakage</td></tr>
+    <tr><td>Permissions-Policy</td><td>geolocation=(), microphone=(), camera=()</td><td>Disables sensitive browser APIs</td></tr>
+    <tr><td>Strict-Transport-Security</td><td>max-age=31536000; includeSubDomains</td><td>Enforces HTTPS for 1 year</td></tr>
+</table>
+<p><span class="section-label">Testing Methodology:</span> Use browser DevTools → Network → Response Headers to verify all headers. Use securityheaders.com to scan.</p>
+<p><span class="section-label">Known Limitations:</span> CSP uses unsafe-inline for scripts and styles — acceptable for development.</p>
+
+<h3>G. Logging &amp; Monitoring (10 points)</h3>
+<p><span class="section-label">Control Description:</span> Structured JSON security event logging for audit trail and incident response.</p>
+<p><span class="section-label">Implementation:</span> SecurityLogger class writes JSON entries to logs/security.log. Each entry includes timestamp (UTC ISO), event type, user ID, IP address, details, and severity.</p>
+<p><span class="section-label">Events Logged:</span> LOGIN_SUCCESS, LOGIN_FAILED, LOGIN_BLOCKED, ACCOUNT_LOCKED, RATE_LIMITED, FILE_UPLOADED, FILE_DOWNLOADED, FILE_VERSION_UPLOADED, UPLOAD_REJECTED, DOCUMENT_SHARED, ACCESS_DENIED, PATH_TRAVERSAL_ATTEMPT, ADMIN_DASHBOARD_ACCESS, ADMIN_USER_LOCKED, ADMIN_USER_UNLOCKED, FILE_LOAD_ERROR.</p>
+<p><span class="section-label">Testing Methodology:</span> Trigger a failed login — verify WARNING entry in security.log. Upload a file — verify FILE_UPLOADED entry. Attempt path traversal — verify PATH_TRAVERSAL_ATTEMPT entry.</p>
+<p><span class="section-label">Known Limitations:</span> Logs stored on same server. No real-time alerting.</p>
+<p><span class="section-label">Mitigation Strategies:</span> Ship logs to remote syslog or SIEM. Add alerting for CRITICAL events.</p>
+
+<!-- Section 4 -->
+<h2>4. Data Protection</h2>
+
+<h3>4.1 Data Classification</h3>
+<table>
+    <tr><th>Data</th><th>Classification</th><th>Storage Location</th><th>Encrypted</th></tr>
+    <tr><td>Password hashes</td><td>Confidential</td><td>data/users.json</td><td>bcrypt hashed</td></tr>
+    <tr><td>Document contents</td><td>Confidential</td><td>data/uuid.enc</td><td>Yes (Fernet)</td></tr>
+    <tr><td>Session tokens</td><td>Confidential</td><td>data/sessions.json</td><td>No</td></tr>
+    <tr><td>Encryption key</td><td>Secret</td><td>secret.key</td><td>No</td></tr>
+    <tr><td>User metadata</td><td>Internal</td><td>data/users.json</td><td>No</td></tr>
+    <tr><td>Security logs</td><td>Internal</td><td>logs/security.log</td><td>No</td></tr>
+</table>
+
+<h3>4.2 Encryption Methods</h3>
+<p><span class="section-label">Password Hashing:</span> bcrypt with cost factor 12. Each password has a unique random salt. Output is a 60-character hash stored in users.json.</p>
+<p><span class="section-label">Document Encryption:</span> Fernet (AES-128-CBC with PKCS7 padding + HMAC-SHA256 authentication). Provides both confidentiality and integrity — tampering with a .enc file is detected on decryption. Binary document data is base64-encoded before encryption to handle all file types.</p>
+<p><span class="section-label">Transport Encryption:</span> TLS via HTTPS. Self-signed RSA-4096 certificate for development. HSTS enforced to prevent downgrade attacks.</p>
+
+<h3>4.3 Key Management</h3>
+<p><span class="section-label">Fernet Encryption Key:</span> Generated once using Fernet.generate_key() on first startup. Stored in secret.key in the project root. All documents share the same key. Key loss means all encrypted documents are permanently unrecoverable.</p>
+<p><span class="section-label">Flask Secret Key:</span> Loaded from the SECRET_KEY environment variable at startup. Falls back to a randomly generated key if not set. Used for Flask session signing.</p>
+<p><span class="section-label">Recommended Production Improvements:</span></p>
+<ul>
+    <li>Store Fernet key in an environment variable or secrets manager</li>
+    <li>Rotate keys periodically with re-encryption of existing documents</li>
+    <li>Use per-document encryption keys derived from a master key</li>
+</ul>
+
+<h3>4.4 Secure Deletion Procedures</h3>
+<p>Document deletion is not currently implemented. When implemented, the following procedures should be followed:</p>
+<ol>
+    <li><strong>Overwrite before delete:</strong> Overwrite the .enc file with random bytes before removing it from disk</li>
+    <li><strong>Remove sharing references:</strong> Remove the document ID from any shared_with entries</li>
+    <li><strong>Audit log:</strong> Log the deletion event with user ID, document ID, and timestamp</li>
+    <li><strong>Version cleanup:</strong> All stored versions within the .enc file are deleted together with the document</li>
+</ol>
+
+<hr>
+<p style="text-align:center; color:#888; font-size:10pt;">
+    CS 419 — Secure Web Application Project &nbsp;|&nbsp; Spring 2026
+</p>
+
+</body>
+</html>
