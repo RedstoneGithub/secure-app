@@ -90,6 +90,7 @@ class BaseTestCase(unittest.TestCase):
         self.client = app.test_client()
 
         self.tmp = tempfile.mkdtemp()
+        self.original_cwd = os.getcwd()
         self.users_file = os.path.join(self.tmp, "users.json")
         self.sessions_file = os.path.join(self.tmp, "sessions.json")
         self.log_file = os.path.join(self.tmp, "security.log")
@@ -105,14 +106,16 @@ class BaseTestCase(unittest.TestCase):
 
         flask_app.login_attempts.clear()
         self._created_docs = []
+        os.chdir(self.tmp)
         os.makedirs("data", exist_ok=True)
 
     def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
         for doc_id in self._created_docs:
             path = os.path.join("data", f"{doc_id}.enc")
             if os.path.exists(path):
                 os.remove(path)
+        os.chdir(self.original_cwd)
+        shutil.rmtree(self.tmp, ignore_errors=True)
         flask_app.security_log.logger.handlers.clear()
 
     # ── Convenience methods ───────────────────────────────────────────────────
