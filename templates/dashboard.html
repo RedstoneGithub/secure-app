@@ -22,7 +22,24 @@
 
     <nav>
         <a href="/">Home</a> |
+        <a href="/documents">Documents</a> |
         <a href="/logout">Logout</a>
     </nav>
+
+    <hr>
+
+    <h2>Change Password</h2>
+    <form method="POST" action="/change-password">
+        <label for="current_password">Current Password</label><br>
+        <input id="current_password" type="password" name="current_password" required><br><br>
+
+        <label for="new_password">New Password</label><br>
+        <input id="new_password" type="password" name="new_password" required><br><br>
+
+        <label for="confirm_password">Confirm New Password</label><br>
+        <input id="confirm_password" type="password" name="confirm_password" required><br><br>
+
+        <button type="submit">Change Password</button>
+    </form>
 </body>
 </html>

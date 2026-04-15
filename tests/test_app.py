@@ -51,7 +51,7 @@ def _make_user(
 
 
 def _read_log(log_path):
-    """Parse security.log and return a list of JSON event dicts."""
+    """Parse a structured log file and return its JSON event entries."""
     if not os.path.exists(log_path):
         return []
     entries = []
@@ -93,16 +93,28 @@ class BaseTestCase(unittest.TestCase):
         self.original_cwd = os.getcwd()
         self.users_file = os.path.join(self.tmp, "users.json")
         self.sessions_file = os.path.join(self.tmp, "sessions.json")
-        self.log_file = os.path.join(self.tmp, "security.log")
+        self.security_log_file = os.path.join(self.tmp, "security.log")
+        self.access_log_file = os.path.join(self.tmp, "access.log")
+        self.log_file = self.security_log_file
 
         flask_app.USERS_FILE = self.users_file
         flask_app.SESSIONS_FILE = self.sessions_file
 
-        logger = flask_app.security_log.logger
-        logger.handlers.clear()
-        h = logging.FileHandler(self.log_file)
-        h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        logger.addHandler(h)
+        security_logger = flask_app.security_log.logger
+        security_logger.handlers.clear()
+        security_handler = logging.FileHandler(self.security_log_file)
+        security_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        security_logger.addHandler(security_handler)
+
+        access_logger = flask_app.access_log.logger
+        access_logger.handlers.clear()
+        access_handler = logging.FileHandler(self.access_log_file)
+        access_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        access_logger.addHandler(access_handler)
 
         flask_app.login_attempts.clear()
         self._created_docs = []
@@ -117,6 +129,7 @@ class BaseTestCase(unittest.TestCase):
         os.chdir(self.original_cwd)
         shutil.rmtree(self.tmp, ignore_errors=True)
         flask_app.security_log.logger.handlers.clear()
+        flask_app.access_log.logger.handlers.clear()
 
     # ── Convenience methods ───────────────────────────────────────────────────
 
@@ -184,6 +197,23 @@ class BaseTestCase(unittest.TestCase):
             if doc_id not in self._created_docs:
                 self._created_docs.append(doc_id)
         return resp
+
+    def _change_password(
+        self,
+        current_password="AlicePass12!",
+        new_password="NewPass1234!",
+        confirm_password="NewPass1234!",
+        follow_redirects=True,
+    ):
+        return self.client.post(
+            "/change-password",
+            data={
+                "current_password": current_password,
+                "new_password": new_password,
+                "confirm_password": confirm_password,
+            },
+            follow_redirects=follow_redirects,
+        )
 
     def _get_sessions(self):
         # Read from wherever the app is currently writing sessions
@@ -377,24 +407,63 @@ class TestLogin(BaseTestCase):
     def test_login_success_logged(self):
         self._seed_user()
         self._login()
-        self.assertTrue(_has_event(self.log_file, "LOGIN_SUCCESS"))
+        self.assertTrue(_has_event(self.access_log_file, "LOGIN_SUCCESS"))
 
     def test_login_failure_logged(self):
         self._seed_user()
         self._login(password="Wrong1!")
-        self.assertTrue(_has_event(self.log_file, "LOGIN_FAILED"))
+        self.assertTrue(_has_event(self.security_log_file, "LOGIN_FAILED"))
 
     def test_account_lockout_logged(self):
         self._seed_user()
         for _ in range(5):
             self._login(password="Wrong1!")
-        self.assertTrue(_has_event(self.log_file, "ACCOUNT_LOCKED"))
+        self.assertTrue(_has_event(self.security_log_file, "ACCOUNT_LOCKED"))
 
     def test_rate_limit_logged(self):
         self._seed_user()
         for _ in range(11):
             self._login()
-        self.assertTrue(_has_event(self.log_file, "RATE_LIMITED"))
+        self.assertTrue(_has_event(self.security_log_file, "RATE_LIMITED"))
+
+
+class TestPasswordChange(BaseTestCase):
+    def test_password_change_updates_hash_and_allows_new_login(self):
+        self._seed_user()
+        old_hash = self._get_users()[0]["password_hash"]
+
+        self._login()
+        resp = self._change_password()
+        self.assertIn(b"password changed successfully", resp.data.lower())
+
+        users = self._get_users()
+        self.assertNotEqual(users[0]["password_hash"], old_hash)
+
+        self.client.get("/logout")
+        old_login = self._login(password="AlicePass12!")
+        self.assertIn(b"invalid username or password", old_login.data.lower())
+
+        new_login = self._login(password="NewPass1234!")
+        self.assertIn(b"dashboard", new_login.data.lower())
+
+    def test_password_change_rejects_wrong_current_password(self):
+        self._seed_user()
+        self._login()
+
+        resp = self._change_password(current_password="WrongPass123!")
+        self.assertIn(b"current password is incorrect", resp.data.lower())
+        self.assertTrue(_has_event(self.security_log_file, "PASSWORD_CHANGE_FAILED"))
+
+    def test_password_change_rejects_weak_new_password(self):
+        self._seed_user()
+        self._login()
+
+        resp = self._change_password(
+            new_password="weakpass",
+            confirm_password="weakpass",
+        )
+        self.assertIn(b"new password must be at least 12 characters", resp.data.lower())
+        self.assertTrue(_has_event(self.security_log_file, "PASSWORD_CHANGE_FAILED"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -501,7 +570,7 @@ class TestAccessControl(BaseTestCase):
         self._seed_user(role="user")
         self._login()
         self.client.get("/admin/dashboard")
-        self.assertTrue(_has_event(self.log_file, "ACCESS_DENIED"))
+        self.assertTrue(_has_event(self.security_log_file, "ACCESS_DENIED"))
 
     def test_admin_can_lock_user(self):
         self._seed_user(username="admin", uid="u_admin", role="admin")
@@ -584,7 +653,7 @@ class TestInputValidation(BaseTestCase):
         self._seed_user()
         self._login()
         self._upload(filename="evil.exe", mimetype="application/octet-stream")
-        self.assertTrue(_has_event(self.log_file, "UPLOAD_REJECTED"))
+        self.assertTrue(_has_event(self.security_log_file, "UPLOAD_REJECTED"))
 
     def test_path_traversal_dotdot_blocked(self):
         # Flask normalizes ../ in URLs before routing, so the handler returns 404.
@@ -824,30 +893,30 @@ class TestLogging(BaseTestCase):
     def test_login_success_logged(self):
         self._seed_user()
         self._login()
-        self.assertTrue(_has_event(self.log_file, "LOGIN_SUCCESS"))
+        self.assertTrue(_has_event(self.access_log_file, "LOGIN_SUCCESS"))
 
     def test_login_failure_logged(self):
         self._seed_user()
         self._login(password="Wrong1!")
-        self.assertTrue(_has_event(self.log_file, "LOGIN_FAILED"))
+        self.assertTrue(_has_event(self.security_log_file, "LOGIN_FAILED"))
 
     def test_account_locked_logged(self):
         self._seed_user()
         for _ in range(5):
             self._login(password="Wrong1!")
-        self.assertTrue(_has_event(self.log_file, "ACCOUNT_LOCKED"))
+        self.assertTrue(_has_event(self.security_log_file, "ACCOUNT_LOCKED"))
 
     def test_rate_limited_logged(self):
         self._seed_user()
         for _ in range(11):
             self._login()
-        self.assertTrue(_has_event(self.log_file, "RATE_LIMITED"))
+        self.assertTrue(_has_event(self.security_log_file, "RATE_LIMITED"))
 
     def test_file_uploaded_logged(self):
         self._seed_user()
         self._login()
         self._upload()
-        self.assertTrue(_has_event(self.log_file, "FILE_UPLOADED"))
+        self.assertTrue(_has_event(self.access_log_file, "FILE_UPLOADED"))
 
     def test_file_downloaded_logged(self):
         self._seed_user()
@@ -856,19 +925,19 @@ class TestLogging(BaseTestCase):
         enc_files = [f for f in os.listdir("data") if f.endswith(".enc")]
         doc_id = enc_files[0].replace(".enc", "")
         self.client.get(f"/documents/download/{doc_id}")
-        self.assertTrue(_has_event(self.log_file, "FILE_DOWNLOADED"))
+        self.assertTrue(_has_event(self.access_log_file, "FILE_DOWNLOADED"))
 
     def test_access_denied_logged(self):
         self._seed_user(role="user")
         self._login()
         self.client.get("/admin/dashboard")
-        self.assertTrue(_has_event(self.log_file, "ACCESS_DENIED"))
+        self.assertTrue(_has_event(self.security_log_file, "ACCESS_DENIED"))
 
     def test_upload_rejected_logged(self):
         self._seed_user()
         self._login()
         self._upload(filename="bad.exe", mimetype="application/octet-stream")
-        self.assertTrue(_has_event(self.log_file, "UPLOAD_REJECTED"))
+        self.assertTrue(_has_event(self.security_log_file, "UPLOAD_REJECTED"))
 
     def test_path_traversal_logged(self):
         self._seed_user()
@@ -889,12 +958,12 @@ class TestLogging(BaseTestCase):
         self.client.post(
             f"/documents/share/{doc_id}", data={"username": "peer", "role": "viewer"}
         )
-        self.assertTrue(_has_event(self.log_file, "DOCUMENT_SHARED"))
+        self.assertTrue(_has_event(self.access_log_file, "DOCUMENT_SHARED"))
 
     def test_log_entry_has_required_fields(self):
         self._seed_user()
         self._login()
-        entries = _read_log(self.log_file)
+        entries = _read_log(self.access_log_file)
         entry = next(e for e in entries if e.get("event_type") == "LOGIN_SUCCESS")
         for field in ("timestamp", "event_type", "user_id", "ip_address"):
             self.assertIn(field, entry)
@@ -903,7 +972,35 @@ class TestLogging(BaseTestCase):
         self._seed_user(role="admin")
         self._login()
         self.client.get("/admin/dashboard")
-        self.assertTrue(_has_event(self.log_file, "ADMIN_DASHBOARD_ACCESS"))
+        self.assertTrue(_has_event(self.access_log_file, "ADMIN_DASHBOARD_ACCESS"))
+
+    def test_dashboard_access_logged(self):
+        self._seed_user()
+        self._login()
+        self.client.get("/dashboard")
+        self.assertTrue(_has_event(self.access_log_file, "DASHBOARD_ACCESSED"))
+
+    def test_documents_access_logged(self):
+        self._seed_user()
+        self._login()
+        self.client.get("/documents")
+        self.assertTrue(_has_event(self.access_log_file, "DOCUMENTS_ACCESSED"))
+
+    def test_password_changed_logged_to_security_log(self):
+        self._seed_user()
+        self._login()
+        self._change_password()
+        self.assertTrue(_has_event(self.security_log_file, "PASSWORD_CHANGED"))
+
+    def test_login_success_not_written_to_security_log(self):
+        self._seed_user()
+        self._login()
+        self.assertFalse(_has_event(self.security_log_file, "LOGIN_SUCCESS"))
+
+    def test_login_failure_not_written_to_access_log(self):
+        self._seed_user()
+        self._login(password="Wrong1!")
+        self.assertFalse(_has_event(self.access_log_file, "LOGIN_FAILED"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -962,7 +1059,7 @@ class TestDocumentFeatures(BaseTestCase):
         self._login()
         self._upload(filename="report.txt", content=b"v1")
         self._upload(filename="report.txt", content=b"v2")
-        self.assertTrue(_has_event(self.log_file, "FILE_VERSION_UPLOADED"))
+        self.assertTrue(_has_event(self.access_log_file, "FILE_VERSION_UPLOADED"))
 
     def test_owner_can_download_previous_version(self):
         self._seed_user()
@@ -1049,6 +1146,43 @@ class TestDocumentFeatures(BaseTestCase):
         # follow_redirects=False: access denied issues a redirect, not a 200
         resp = self.client.get(f"/documents/download/{doc_id}", follow_redirects=False)
         self.assertNotEqual(resp.status_code, 200)
+
+    def test_owner_can_delete_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._login(username="owner")
+        self._upload(filename="delete-me.txt", content=b"bye")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        resp = self.client.post(f"/documents/delete/{doc_id}", follow_redirects=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(os.path.exists(os.path.join("data", f"{doc_id}.enc")))
+        self.assertIn(b"document deleted successfully", resp.data.lower())
+
+    def test_non_owner_cannot_delete_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="other", uid="u_other")
+        self._login(username="owner")
+        self._upload(filename="delete-me.txt", content=b"bye")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.get("/logout")
+
+        self._login(username="other")
+        resp = self.client.post(f"/documents/delete/{doc_id}", follow_redirects=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(os.path.exists(os.path.join("data", f"{doc_id}.enc")))
+        self.assertIn(b"only the document owner can delete it", resp.data.lower())
+
+    def test_document_deleted_logged(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._login(username="owner")
+        self._upload(filename="delete-me.txt", content=b"bye")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        self.client.post(f"/documents/delete/{doc_id}", follow_redirects=True)
+
+        self.assertTrue(_has_event(self.access_log_file, "DOCUMENT_DELETED"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

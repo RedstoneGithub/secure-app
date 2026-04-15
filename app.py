@@ -18,7 +18,7 @@ import uuid
 import bcrypt
 import secrets
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 import config
@@ -60,10 +60,10 @@ class EncryptedStorage:
             return json.loads(decrypted.decode())
 
 
-class SecurityLogger:
-    def __init__(self, log_file="logs/security.log"):
+class StructuredLogger:
+    def __init__(self, name, log_file):
         os.makedirs("logs", exist_ok=True)
-        self.logger = logging.getLogger("security")
+        self.logger = logging.getLogger(name)
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
             handler = logging.FileHandler(log_file)
@@ -74,7 +74,7 @@ class SecurityLogger:
 
     def log_event(self, event_type, user_id, details, severity="INFO"):
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "user_id": user_id,
             "ip_address": request.remote_addr,
@@ -91,7 +91,18 @@ class SecurityLogger:
             self.logger.info(msg)
 
 
+class SecurityLogger(StructuredLogger):
+    def __init__(self, log_file="logs/security.log"):
+        super().__init__("security", log_file)
+
+
+class AccessLogger(StructuredLogger):
+    def __init__(self, log_file="logs/access.log"):
+        super().__init__("access", log_file)
+
+
 security_log = SecurityLogger()
+access_log = AccessLogger()
 encrypted_storage = EncryptedStorage()
 
 # Tracks login attempts per IP: {ip: [timestamp, ...]}
@@ -217,6 +228,12 @@ def validate_password(password):
     return True
 
 
+def hash_password(password):
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode(
+        "utf-8"
+    )
+
+
 def find_user_by_username(username):
     users = load_users()
     for user in users:
@@ -251,6 +268,18 @@ def update_user(updated_user):
             users[i] = updated_user
             break
     save_users(users)
+
+
+def securely_delete_file(path):
+    if not os.path.exists(path):
+        return
+
+    size = os.path.getsize(path)
+    with open(path, "r+b") as f:
+        f.write(os.urandom(size))
+        f.flush()
+        os.fsync(f.fileno())
+    os.remove(path)
 
 
 def create_session(user):
@@ -350,7 +379,7 @@ def login():
             token = create_session(user)
             session["session_token"] = token
 
-            security_log.log_event("LOGIN_SUCCESS", user["id"], {"username": username})
+            access_log.log_event("LOGIN_SUCCESS", user["id"], {"username": username})
             flash("Login successful.")
             return redirect(url_for("dashboard"))
 
@@ -422,9 +451,7 @@ def register():
                 return redirect(url_for("register"))
 
         # Hash password
-        hashed_password = bcrypt.hashpw(
-            password.encode("utf-8"), bcrypt.gensalt(rounds=12)
-        ).decode("utf-8")
+        hashed_password = hash_password(password)
 
         # Allow guest registration — guests get read-only access
         requested_role = request.form.get("role", "user")
@@ -571,7 +598,7 @@ def upload_document():
                 existing_doc["versions"] = versions
                 encrypted_storage.save_encrypted(existing_enc_path, existing_doc)
                 doc_id = existing_doc["id"]
-                security_log.log_event(
+                access_log.log_event(
                     "FILE_VERSION_UPLOADED",
                     current_session["user_id"],
                     {
@@ -602,7 +629,7 @@ def upload_document():
                         "versions": [],  # stores previous versions
                     },
                 )
-                security_log.log_event(
+                access_log.log_event(
                     "FILE_UPLOADED",
                     current_session["user_id"],
                     {"filename": file.filename, "doc_id": doc_id},
@@ -681,7 +708,7 @@ def download_document(doc_id):
         return redirect(url_for("documents"))
 
     # Return the file for download
-    security_log.log_event(
+    access_log.log_event(
         "FILE_DOWNLOADED",
         user_id,
         {"filename": file_data["filename"], "doc_id": doc_id},
@@ -739,7 +766,7 @@ def view_document(doc_id):
         flash("You do not have access to this document.")
         return redirect(url_for("documents"))
 
-    security_log.log_event(
+    access_log.log_event(
         "FILE_VIEWED", user_id, {"filename": file_data["filename"], "doc_id": doc_id}
     )
     from io import BytesIO
@@ -802,12 +829,62 @@ def share_document(doc_id):
     file_data["shared_with"][target_user["id"]] = role
     encrypted_storage.save_encrypted(enc_path, file_data)
 
-    security_log.log_event(
+    access_log.log_event(
         "DOCUMENT_SHARED",
         current_session["user_id"],
         {"doc_id": doc_id, "shared_with": target_user["id"], "role": role},
     )
     flash(f"Document shared with {target_username} as {role}.")
+    return redirect(url_for("documents"))
+
+
+@app.route("/documents/delete/<doc_id>", methods=["POST"])
+@require_auth
+def delete_document(doc_id):
+    current_session = get_current_session()
+
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    if not os.path.exists(enc_path):
+        flash("Document not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+    if file_data.get("user_id") != current_session["user_id"]:
+        security_log.log_event(
+            "ACCESS_DENIED",
+            current_session["user_id"],
+            {"doc_id": doc_id, "reason": "Only owner can delete"},
+            "WARNING",
+        )
+        flash("Only the document owner can delete it.")
+        return redirect(url_for("documents"))
+
+    securely_delete_file(enc_path)
+    access_log.log_event(
+        "DOCUMENT_DELETED",
+        current_session["user_id"],
+        {"doc_id": doc_id, "filename": file_data["filename"]},
+    )
+    flash("Document deleted successfully.")
     return redirect(url_for("documents"))
 
 
@@ -843,6 +920,7 @@ def document_versions(doc_id):
         flash("You do not have access to this document.")
         return redirect(url_for("documents"))
 
+    access_log.log_event("DOCUMENT_VERSIONS_ACCESSED", user_id, {"doc_id": doc_id})
     versions = file_data.get("versions", [])
     return render_template(
         "versions.html",
@@ -898,7 +976,7 @@ def download_document_version(doc_id, version_number):
         flash("Version not found.")
         return redirect(url_for("document_versions", doc_id=doc_id))
 
-    security_log.log_event(
+    access_log.log_event(
         "FILE_VERSION_DOWNLOADED",
         user_id,
         {
@@ -981,7 +1059,7 @@ def restore_document_version(doc_id, version_number):
     file_data["versions"] = versions
 
     encrypted_storage.save_encrypted(enc_path, file_data)
-    security_log.log_event(
+    access_log.log_event(
         "FILE_VERSION_RESTORED",
         user_id,
         {
@@ -1004,6 +1082,7 @@ def documents():
         flash("Please log in first.")
         return redirect(url_for("login"))
 
+    access_log.log_event("DOCUMENTS_ACCESSED", current_session["user_id"], {})
     return render_template(
         "documents.html",
         username=current_session["username"],
@@ -1035,7 +1114,7 @@ def admin_dashboard():
                     "ERROR",
                 )
 
-    security_log.log_event("ADMIN_DASHBOARD_ACCESS", current_session["user_id"], {})
+    access_log.log_event("ADMIN_DASHBOARD_ACCESS", current_session["user_id"], {})
     return render_template(
         "admin.html",
         username=current_session["username"],
@@ -1091,14 +1170,85 @@ def dashboard():
         flash("Please log in first.")
         return redirect(url_for("login"))
 
+    access_log.log_event("DASHBOARD_ACCESSED", current_session["user_id"], {})
     return render_template("dashboard.html", username=current_session["username"])
+
+
+@app.route("/change-password", methods=["POST"])
+@require_auth
+def change_password():
+    current_session = get_current_session()
+    current_password = request.form.get("current_password", "")
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    user = find_user_by_username(current_session["username"])
+    if not user:
+        flash("User not found.")
+        return redirect(url_for("dashboard"))
+
+    if not bcrypt.checkpw(
+        current_password.encode("utf-8"), user["password_hash"].encode("utf-8")
+    ):
+        security_log.log_event(
+            "PASSWORD_CHANGE_FAILED",
+            user["id"],
+            {"reason": "Invalid current password"},
+            "WARNING",
+        )
+        flash("Current password is incorrect.")
+        return redirect(url_for("dashboard"))
+
+    if not validate_password(new_password):
+        security_log.log_event(
+            "PASSWORD_CHANGE_FAILED",
+            user["id"],
+            {"reason": "Password policy validation failed"},
+            "WARNING",
+        )
+        flash(
+            "New password must be at least 12 characters and include uppercase, lowercase, number, and special character."
+        )
+        return redirect(url_for("dashboard"))
+
+    if new_password != confirm_password:
+        security_log.log_event(
+            "PASSWORD_CHANGE_FAILED",
+            user["id"],
+            {"reason": "Passwords do not match"},
+            "WARNING",
+        )
+        flash("New passwords do not match.")
+        return redirect(url_for("dashboard"))
+
+    if bcrypt.checkpw(
+        new_password.encode("utf-8"), user["password_hash"].encode("utf-8")
+    ):
+        security_log.log_event(
+            "PASSWORD_CHANGE_FAILED",
+            user["id"],
+            {"reason": "New password matches current password"},
+            "WARNING",
+        )
+        flash("New password must be different from the current password.")
+        return redirect(url_for("dashboard"))
+
+    user["password_hash"] = hash_password(new_password)
+    update_user(user)
+    security_log.log_event("PASSWORD_CHANGED", user["id"], {})
+    flash("Password changed successfully.")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout")
 def logout():
+    current_session = get_current_session()
     token = session.get("session_token")
     if token:
         destroy_session(token)
+
+    if current_session:
+        access_log.log_event("LOGOUT", current_session["user_id"], {})
 
     session.clear()
     flash("You have been logged out.")

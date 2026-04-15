@@ -60,6 +60,9 @@
                         <a href="/documents/download/{{ doc.id }}">Download</a> |
                         <a href="/documents/versions/{{ doc.id }}">Version History</a>
                         (v{{ doc.version if doc.version else 1 }})
+                        <form method="POST" action="/documents/delete/{{ doc.id }}" style="display:inline; margin-left:8px;">
+                            <button type="submit">Delete</button>
+                        </form>
                     </td>
                     <td>
                         <!-- Share form — POST to /documents/share/<doc_id> -->
