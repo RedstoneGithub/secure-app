@@ -56,6 +56,7 @@
                     <td>{{ doc.filename }}</td>
                     <td>{{ doc.uploaded_at }}</td>
                     <td>
+                        <a href="/documents/view/{{ doc.id }}">Open</a> |
                         <a href="/documents/download/{{ doc.id }}">Download</a> |
                         <a href="/documents/versions/{{ doc.id }}">Version History</a>
                         (v{{ doc.version if doc.version else 1 }})
@@ -95,11 +96,13 @@
                     <td>{{ doc.filename }}</td>
                     <td>{{ doc.user_role }}</td>
                     <td>
+                        <a href="/documents/view/{{ doc.id }}">Open</a>
                         {% if doc.user_role == "editor" %}
-                            <a href="/documents/download/{{ doc.id }}">Download</a>
+                            | <a href="/documents/download/{{ doc.id }}">Download</a>
                         {% else %}
-                            <em>View only</em>
+                            | <em>View only</em>
                         {% endif %}
+                        | <a href="/documents/versions/{{ doc.id }}">Version History</a>
                     </td>
                 </tr>
             {% endfor %}

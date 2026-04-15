@@ -37,7 +37,14 @@
         <tr>
             <td>v{{ current_version }}</td>
             <td>{{ current_uploaded_at }}</td>
-            <td><a href="/documents/download/{{ doc_id }}">Download</a></td>
+            <td>
+                <a href="/documents/view/{{ doc_id }}">Open</a>
+                {% if can_download %}
+                    | <a href="/documents/download/{{ doc_id }}">Download</a>
+                {% else %}
+                    | <em>View only</em>
+                {% endif %}
+            </td>
         </tr>
     </table>
 
@@ -49,11 +56,24 @@
             <tr>
                 <th>Version</th>
                 <th>Uploaded At</th>
+                <th>Actions</th>
             </tr>
             {% for v in versions | reverse %}
                 <tr>
                     <td>v{{ v.version }}</td>
                     <td>{{ v.uploaded_at }}</td>
+                    <td>
+                        {% if can_download %}
+                            <a href="/documents/versions/{{ doc_id }}/download/{{ v.version }}">Download</a>
+                        {% else %}
+                            <em>No download access</em>
+                        {% endif %}
+                        {% if can_restore %}
+                            | <form method="POST" action="/documents/versions/{{ doc_id }}/restore/{{ v.version }}" style="display:inline;">
+                                <button type="submit">Restore</button>
+                              </form>
+                        {% endif %}
+                    </td>
                 </tr>
             {% endfor %}
         </table>

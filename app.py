@@ -1,4 +1,13 @@
-from flask import Flask, render_template, request, redirect, send_file, url_for, flash, session
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    send_file,
+    url_for,
+    flash,
+    session,
+)
 from cryptography.fernet import Fernet
 import base64
 import json
@@ -21,57 +30,62 @@ app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
 app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
 USERS_FILE = config.USERS_FILE
 
+
 class EncryptedStorage:
-    def __init__(self, key_file='secret.key'):
+    def __init__(self, key_file="secret.key"):
         # Load or generate encryption key
         try:
-            with open(key_file, 'rb') as f:
+            with open(key_file, "rb") as f:
                 self.key = f.read()
         except FileNotFoundError:
             self.key = Fernet.generate_key()
-            with open(key_file, 'wb') as f:
+            with open(key_file, "wb") as f:
                 f.write(self.key)
 
         self.cipher = Fernet(self.key)
-        
+
     def save_encrypted(self, filename, data):
         """Save encrypted JSON data"""
         json_data = json.dumps(data)
         encrypted = self.cipher.encrypt(json_data.encode())
 
-        with open(filename, 'wb') as f:
+        with open(filename, "wb") as f:
             f.write(encrypted)
+
     def load_encrypted(self, filename):
         """Load and decrypt JSON data"""
-        with open(filename, 'rb') as f:
+        with open(filename, "rb") as f:
             encrypted = f.read()
             decrypted = self.cipher.decrypt(encrypted)
             return json.loads(decrypted.decode())
 
+
 class SecurityLogger:
-    def __init__(self, log_file='logs/security.log'):
-        os.makedirs('logs', exist_ok=True)
-        self.logger = logging.getLogger('security')
+    def __init__(self, log_file="logs/security.log"):
+        os.makedirs("logs", exist_ok=True)
+        self.logger = logging.getLogger("security")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
             handler = logging.FileHandler(log_file)
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
             self.logger.addHandler(handler)
 
-    def log_event(self, event_type, user_id, details, severity='INFO'):
+    def log_event(self, event_type, user_id, details, severity="INFO"):
         entry = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'event_type': event_type,
-            'user_id': user_id,
-            'ip_address': request.remote_addr,
-            'details': details
+            "timestamp": datetime.utcnow().isoformat(),
+            "event_type": event_type,
+            "user_id": user_id,
+            "ip_address": request.remote_addr,
+            "details": details,
         }
         msg = json.dumps(entry)
-        if severity == 'CRITICAL':
+        if severity == "CRITICAL":
             self.logger.critical(msg)
-        elif severity == 'ERROR':
+        elif severity == "ERROR":
             self.logger.error(msg)
-        elif severity == 'WARNING':
+        elif severity == "WARNING":
             self.logger.warning(msg)
         else:
             self.logger.info(msg)
@@ -82,6 +96,7 @@ encrypted_storage = EncryptedStorage()
 
 # Tracks login attempts per IP: {ip: [timestamp, ...]}
 login_attempts = {}
+
 
 def is_rate_limited(ip):
     now = time.time()
@@ -96,15 +111,39 @@ def is_rate_limited(ip):
     return False
 
 
-def decode_document_bytes(file_record):
+def decode_document_bytes(file_record, fallback_record=None):
     """Support binary-safe storage while remaining compatible with older text-only records."""
     encoding = file_record.get("content_encoding")
+    if encoding is None and fallback_record is not None:
+        encoding = fallback_record.get("content_encoding")
     if encoding == "base64":
         return base64.b64decode(file_record["data"])
     return file_record["data"].encode("utf-8")
 
+
+def build_version_filename(filename, version_number):
+    stem, ext = os.path.splitext(filename)
+    return f"{stem}_v{version_number}{ext}"
+
+
+def get_version_record(file_data, version_number):
+    for version in file_data.get("versions", []):
+        if version.get("version") == version_number:
+            version_record = dict(version)
+            version_record.setdefault(
+                "content_encoding", file_data.get("content_encoding")
+            )
+            version_record.setdefault(
+                "content_type",
+                file_data.get("content_type", "application/octet-stream"),
+            )
+            return version_record
+    return None
+
+
 # --- RBAC decorators ---
 from functools import wraps
+
 
 def require_auth(f):
     @wraps(f)
@@ -113,7 +152,9 @@ def require_auth(f):
             flash("Please log in first.")
             return redirect(url_for("login"))
         return f(*args, **kwargs)
+
     return decorated_function
+
 
 def require_role(role):
     def decorator(f):
@@ -121,12 +162,22 @@ def require_role(role):
         def decorated_function(*args, **kwargs):
             current = get_current_session()
             if not current or current["role"] != role:
-                security_log.log_event('ACCESS_DENIED', current["user_id"] if current else None, {'resource': request.path, 'required_role': role}, 'WARNING')
+                security_log.log_event(
+                    "ACCESS_DENIED",
+                    current["user_id"] if current else None,
+                    {"resource": request.path, "required_role": role},
+                    "WARNING",
+                )
                 return "Forbidden", 403
             return f(*args, **kwargs)
+
         return decorated_function
+
     return decorator
+
+
 # --- end RBAC decorators ---
+
 
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -140,10 +191,10 @@ def load_users():
 
 
 def save_users(users):
-
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=4)
-        
+
+
 def validate_username(username):
     return re.fullmatch(r"^\w{3,20}$", username) is not None
 
@@ -173,6 +224,7 @@ def find_user_by_username(username):
             return user
     return None
 
+
 SESSIONS_FILE = config.SESSIONS_FILE
 
 
@@ -199,7 +251,8 @@ def update_user(updated_user):
             users[i] = updated_user
             break
     save_users(users)
-    
+
+
 def create_session(user):
     sessions = load_sessions()
     token = secrets.token_urlsafe(32)
@@ -209,7 +262,7 @@ def create_session(user):
         "username": user["username"],
         "role": user["role"],
         "created_at": time.time(),
-        "last_activity": time.time()
+        "last_activity": time.time(),
     }
 
     save_sessions(sessions)
@@ -246,6 +299,7 @@ def get_current_session():
 
     return session_data
 
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -256,7 +310,7 @@ def login():
     if request.method == "POST":
         ip = request.remote_addr
         if is_rate_limited(ip):
-            security_log.log_event('RATE_LIMITED', None, {'ip': ip}, 'WARNING')
+            security_log.log_event("RATE_LIMITED", None, {"ip": ip}, "WARNING")
             flash("Too many login attempts. Please wait a minute.")
             return redirect(url_for("login"))
 
@@ -266,17 +320,29 @@ def login():
         user = find_user_by_username(username)
 
         if not user:
-            security_log.log_event('LOGIN_FAILED', None, {'username': username, 'reason': 'User not found'}, 'WARNING')
+            security_log.log_event(
+                "LOGIN_FAILED",
+                None,
+                {"username": username, "reason": "User not found"},
+                "WARNING",
+            )
             flash("Invalid username or password.")
             return redirect(url_for("login"))
 
         # Check if account is locked
         if user["locked_until"] is not None and time.time() < user["locked_until"]:
-            security_log.log_event('LOGIN_BLOCKED', user["id"], {'username': username, 'reason': 'Account locked'}, 'WARNING')
+            security_log.log_event(
+                "LOGIN_BLOCKED",
+                user["id"],
+                {"username": username, "reason": "Account locked"},
+                "WARNING",
+            )
             flash("Account is locked. Try again later.")
             return redirect(url_for("login"))
 
-        if bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        if bcrypt.checkpw(
+            password.encode("utf-8"), user["password_hash"].encode("utf-8")
+        ):
             user["failed_attempts"] = 0
             user["locked_until"] = None
             update_user(user)
@@ -284,7 +350,7 @@ def login():
             token = create_session(user)
             session["session_token"] = token
 
-            security_log.log_event('LOGIN_SUCCESS', user["id"], {'username': username})
+            security_log.log_event("LOGIN_SUCCESS", user["id"], {"username": username})
             flash("Login successful.")
             return redirect(url_for("dashboard"))
 
@@ -293,17 +359,26 @@ def login():
 
             if user["failed_attempts"] >= config.MAX_FAILED_ATTEMPTS:
                 user["locked_until"] = time.time() + config.LOCKOUT_DURATION
-                security_log.log_event('ACCOUNT_LOCKED', user["id"], {'username': username, 'reason': '5 failed login attempts'}, 'ERROR')
+                security_log.log_event(
+                    "ACCOUNT_LOCKED",
+                    user["id"],
+                    {"username": username, "reason": "5 failed login attempts"},
+                    "ERROR",
+                )
                 flash("Account locked due to too many failed login attempts.")
             else:
-                security_log.log_event('LOGIN_FAILED', user["id"], {'username': username, 'reason': 'Invalid password'}, 'WARNING')
+                security_log.log_event(
+                    "LOGIN_FAILED",
+                    user["id"],
+                    {"username": username, "reason": "Invalid password"},
+                    "WARNING",
+                )
                 flash("Invalid username or password.")
 
             update_user(user)
             return redirect(url_for("login"))
 
     return render_template("login.html")
-
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -316,7 +391,9 @@ def register():
 
         # Validation checks
         if not validate_username(username):
-            flash("Username must be 3-20 characters and contain only letters, numbers, or underscores.")
+            flash(
+                "Username must be 3-20 characters and contain only letters, numbers, or underscores."
+            )
             return redirect(url_for("register"))
 
         if not validate_email(email):
@@ -324,7 +401,9 @@ def register():
             return redirect(url_for("register"))
 
         if not validate_password(password):
-            flash("Password must be at least 12 characters and include uppercase, lowercase, number, and special character.")
+            flash(
+                "Password must be at least 12 characters and include uppercase, lowercase, number, and special character."
+            )
             return redirect(url_for("register"))
 
         if password != confirm_password:
@@ -343,7 +422,9 @@ def register():
                 return redirect(url_for("register"))
 
         # Hash password
-        hashed_password = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+        hashed_password = bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt(rounds=12)
+        ).decode("utf-8")
 
         # Allow guest registration — guests get read-only access
         requested_role = request.form.get("role", "user")
@@ -357,7 +438,7 @@ def register():
             "role": role,
             "failed_attempts": 0,
             "locked_until": None,
-            "created_at": time.time()
+            "created_at": time.time(),
         }
 
         users.append(new_user)
@@ -367,6 +448,7 @@ def register():
         return redirect(url_for("home"))
 
     return render_template("register.html")
+
 
 def get_user_documents(user_id):
     # Returns all docs the user owns or has been shared with
@@ -381,15 +463,24 @@ def get_user_documents(user_id):
                     if "id" not in file_data:
                         file_data["id"] = filename.replace(".enc", "")
                     # Attach the user's role for use in templates
-                    file_data["user_role"] = "owner" if is_owner else file_data["shared_with"][user_id]
+                    file_data["user_role"] = (
+                        "owner" if is_owner else file_data["shared_with"][user_id]
+                    )
                     documents.append(file_data)
             except Exception as e:
-                security_log.log_event('FILE_LOAD_ERROR', user_id, {'filename': filename, 'error': str(e)}, 'ERROR')
+                security_log.log_event(
+                    "FILE_LOAD_ERROR",
+                    user_id,
+                    {"filename": filename, "error": str(e)},
+                    "ERROR",
+                )
     return documents
 
+
 def allowed_file(filename, mimetype):
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return ext in config.ALLOWED_EXTENSIONS and mimetype in config.ALLOWED_MIME_TYPES
+
 
 @app.route("/documents/upload", methods=["GET", "POST"])
 @require_auth  # added: require login
@@ -402,7 +493,12 @@ def upload_document():
 
     # Guests cannot upload documents
     if current_session["role"] == "guest":
-        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'resource': '/documents/upload', 'reason': 'Guest role cannot upload'}, 'WARNING')
+        security_log.log_event(
+            "ACCESS_DENIED",
+            current_session["user_id"],
+            {"resource": "/documents/upload", "reason": "Guest role cannot upload"},
+            "WARNING",
+        )
         flash("Guest accounts cannot upload documents.")
         return redirect(url_for("documents"))
 
@@ -412,13 +508,29 @@ def upload_document():
         if file:
             # Validate extension and MIME type
             if not allowed_file(file.filename, file.mimetype):
-                security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'mimetype': file.mimetype, 'reason': 'Invalid file type'}, 'WARNING')
-                flash("File type not allowed. Allowed types: pdf, txt, docx, png, jpg, jpeg.")
+                security_log.log_event(
+                    "UPLOAD_REJECTED",
+                    current_session["user_id"],
+                    {
+                        "filename": file.filename,
+                        "mimetype": file.mimetype,
+                        "reason": "Invalid file type",
+                    },
+                    "WARNING",
+                )
+                flash(
+                    "File type not allowed. Allowed types: pdf, txt, docx, png, jpg, jpeg."
+                )
                 return redirect(url_for("upload_document"))
             # Validate file size
             file_data = file.read()
             if len(file_data) > config.MAX_FILE_SIZE:
-                security_log.log_event('UPLOAD_REJECTED', current_session["user_id"], {'filename': file.filename, 'reason': 'File too large'}, 'WARNING')
+                security_log.log_event(
+                    "UPLOAD_REJECTED",
+                    current_session["user_id"],
+                    {"filename": file.filename, "reason": "File too large"},
+                    "WARNING",
+                )
                 flash("File too large. Maximum size is 10 MB.")
                 return redirect(url_for("upload_document"))
             # Check if a doc with the same filename already exists (for versioning)
@@ -428,7 +540,10 @@ def upload_document():
                 if fname.endswith(".enc"):
                     try:
                         d = encrypted_storage.load_encrypted(f"data/{fname}")
-                        if d.get("user_id") == current_session["user_id"] and d.get("filename") == file.filename:
+                        if (
+                            d.get("user_id") == current_session["user_id"]
+                            and d.get("filename") == file.filename
+                        ):
                             existing_doc = d
                             existing_enc_path = f"data/{fname}"
                             break
@@ -438,40 +553,64 @@ def upload_document():
             if existing_doc:
                 # Add current data as a previous version
                 versions = existing_doc.get("versions", [])
-                versions.append({
-                    "version": existing_doc.get("version", 1),
-                    "data": existing_doc["data"],
-                    "uploaded_at": existing_doc["uploaded_at"],
-                    "uploaded_by": existing_doc["user_id"]
-                })
+                versions.append(
+                    {
+                        "version": existing_doc.get("version", 1),
+                        "data": existing_doc["data"],
+                        "content_encoding": existing_doc.get("content_encoding"),
+                        "content_type": existing_doc.get(
+                            "content_type", "application/octet-stream"
+                        ),
+                        "uploaded_at": existing_doc["uploaded_at"],
+                        "uploaded_by": existing_doc["user_id"],
+                    }
+                )
                 existing_doc["data"] = base64.b64encode(file_data).decode("ascii")
                 existing_doc["uploaded_at"] = datetime.now().isoformat()
                 existing_doc["version"] = existing_doc.get("version", 1) + 1
                 existing_doc["versions"] = versions
                 encrypted_storage.save_encrypted(existing_enc_path, existing_doc)
                 doc_id = existing_doc["id"]
-                security_log.log_event('FILE_VERSION_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id, 'version': existing_doc["version"]})
-                flash(f"New version (v{existing_doc['version']}) uploaded successfully.")
+                security_log.log_event(
+                    "FILE_VERSION_UPLOADED",
+                    current_session["user_id"],
+                    {
+                        "filename": file.filename,
+                        "doc_id": doc_id,
+                        "version": existing_doc["version"],
+                    },
+                )
+                flash(
+                    f"New version (v{existing_doc['version']}) uploaded successfully."
+                )
             else:
                 # Brand new document
                 doc_id = str(uuid.uuid4())
                 enc_filename = f"data/{doc_id}.enc"
-                encrypted_storage.save_encrypted(enc_filename, {
-                    "id": doc_id,
-                    "filename": file.filename,
-                    "data": base64.b64encode(file_data).decode("ascii"),
-                    "content_encoding": "base64",
-                    "content_type": file.mimetype or "application/octet-stream",
-                    "user_id": current_session["user_id"],
-                    "uploaded_at": datetime.now().isoformat(),
-                    "shared_with": {},  # {user_id: "editor" or "viewer"}
-                    "version": 1,
-                    "versions": []  # stores previous versions
-                })
-                security_log.log_event('FILE_UPLOADED', current_session["user_id"], {'filename': file.filename, 'doc_id': doc_id})
+                encrypted_storage.save_encrypted(
+                    enc_filename,
+                    {
+                        "id": doc_id,
+                        "filename": file.filename,
+                        "data": base64.b64encode(file_data).decode("ascii"),
+                        "content_encoding": "base64",
+                        "content_type": file.mimetype or "application/octet-stream",
+                        "user_id": current_session["user_id"],
+                        "uploaded_at": datetime.now().isoformat(),
+                        "shared_with": {},  # {user_id: "editor" or "viewer"}
+                        "version": 1,
+                        "versions": [],  # stores previous versions
+                    },
+                )
+                security_log.log_event(
+                    "FILE_UPLOADED",
+                    current_session["user_id"],
+                    {"filename": file.filename, "doc_id": doc_id},
+                )
                 flash("File uploaded and encrypted successfully.")
 
-    return render_template("documents.html", username=current_session["username"])
+    return redirect(url_for("documents"))
+
 
 @app.route("/documents/download/<doc_id>")
 @require_auth  # added: require login
@@ -484,20 +623,38 @@ def download_document(doc_id):
 
     # Guests cannot download documents
     if current_session["role"] == "guest":
-        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'resource': f'/documents/download/{doc_id}', 'reason': 'Guest role cannot download'}, 'WARNING')
+        security_log.log_event(
+            "ACCESS_DENIED",
+            current_session["user_id"],
+            {
+                "resource": f"/documents/download/{doc_id}",
+                "reason": "Guest role cannot download",
+            },
+            "WARNING",
+        )
         flash("Guest accounts cannot download documents.")
         return redirect(url_for("documents"))
 
     # Path traversal prevention — ensure doc_id is a plain UUID with no path characters
-    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
-        security_log.log_event('PATH_TRAVERSAL_ATTEMPT', current_session["user_id"], {'doc_id': doc_id}, 'WARNING')
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
         return "Bad request", 400
 
     # Retrieve the encrypted file by document ID
     base_dir = os.path.abspath("data")
     enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
     if not enc_path.startswith(base_dir):
-        security_log.log_event('PATH_TRAVERSAL_ATTEMPT', current_session["user_id"], {'doc_id': doc_id}, 'WARNING')
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
         return "Bad request", 400
 
     if not os.path.exists(enc_path):
@@ -514,19 +671,86 @@ def download_document(doc_id):
     is_owner = file_data.get("user_id") == user_id
     shared_role = file_data.get("shared_with", {}).get(user_id)
     if not is_owner and shared_role != "editor":
-        security_log.log_event('ACCESS_DENIED', user_id, {'doc_id': doc_id, 'reason': 'Insufficient document role'}, 'WARNING')
+        security_log.log_event(
+            "ACCESS_DENIED",
+            user_id,
+            {"doc_id": doc_id, "reason": "Insufficient document role"},
+            "WARNING",
+        )
         flash("You do not have permission to download this file.")
         return redirect(url_for("documents"))
 
     # Return the file for download
-    security_log.log_event('FILE_DOWNLOADED', user_id, {'filename': file_data["filename"], 'doc_id': doc_id})
+    security_log.log_event(
+        "FILE_DOWNLOADED",
+        user_id,
+        {"filename": file_data["filename"], "doc_id": doc_id},
+    )
     from io import BytesIO
+
     return send_file(
         BytesIO(decode_document_bytes(file_data)),
         as_attachment=True,
         download_name=file_data["filename"],
-        mimetype=file_data.get("content_type", "application/octet-stream")
+        mimetype=file_data.get("content_type", "application/octet-stream"),
     )
+
+
+@app.route("/documents/view/<doc_id>")
+@require_auth
+def view_document(doc_id):
+    current_session = get_current_session()
+
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    if not os.path.exists(enc_path):
+        flash("File not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+    user_id = current_session["user_id"]
+    is_owner = file_data.get("user_id") == user_id
+    is_shared = user_id in file_data.get("shared_with", {})
+    if not is_owner and not is_shared:
+        security_log.log_event(
+            "ACCESS_DENIED",
+            user_id,
+            {"doc_id": doc_id, "reason": "Not authorized to view document"},
+            "WARNING",
+        )
+        flash("You do not have access to this document.")
+        return redirect(url_for("documents"))
+
+    security_log.log_event(
+        "FILE_VIEWED", user_id, {"filename": file_data["filename"], "doc_id": doc_id}
+    )
+    from io import BytesIO
+
+    return send_file(
+        BytesIO(decode_document_bytes(file_data)),
+        as_attachment=False,
+        download_name=file_data["filename"],
+        mimetype=file_data.get("content_type", "application/octet-stream"),
+    )
+
 
 @app.route("/documents/share/<doc_id>", methods=["POST"])
 @require_auth  # added: require login — share a document with another user
@@ -534,7 +758,7 @@ def share_document(doc_id):
     current_session = get_current_session()
 
     # Validate doc_id format
-    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
         return "Bad request", 400
 
     base_dir = os.path.abspath("data")
@@ -547,7 +771,12 @@ def share_document(doc_id):
 
     # Only the owner can share
     if file_data.get("user_id") != current_session["user_id"]:
-        security_log.log_event('ACCESS_DENIED', current_session["user_id"], {'doc_id': doc_id, 'reason': 'Only owner can share'}, 'WARNING')
+        security_log.log_event(
+            "ACCESS_DENIED",
+            current_session["user_id"],
+            {"doc_id": doc_id, "reason": "Only owner can share"},
+            "WARNING",
+        )
         flash("Only the document owner can share it.")
         return redirect(url_for("documents"))
 
@@ -573,7 +802,11 @@ def share_document(doc_id):
     file_data["shared_with"][target_user["id"]] = role
     encrypted_storage.save_encrypted(enc_path, file_data)
 
-    security_log.log_event('DOCUMENT_SHARED', current_session["user_id"], {'doc_id': doc_id, 'shared_with': target_user["id"], 'role': role})
+    security_log.log_event(
+        "DOCUMENT_SHARED",
+        current_session["user_id"],
+        {"doc_id": doc_id, "shared_with": target_user["id"], "role": role},
+    )
     flash(f"Document shared with {target_username} as {role}.")
     return redirect(url_for("documents"))
 
@@ -584,7 +817,7 @@ def share_document(doc_id):
 def document_versions(doc_id):
     current_session = get_current_session()
 
-    if not re.match(r'^[a-f0-9\-]{36}$', doc_id):
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
         return "Bad request", 400
 
     base_dir = os.path.abspath("data")
@@ -598,21 +831,168 @@ def document_versions(doc_id):
     # Must be owner or shared user to view versions
     user_id = current_session["user_id"]
     is_owner = file_data.get("user_id") == user_id
-    is_shared = user_id in file_data.get("shared_with", {})
+    shared_role = file_data.get("shared_with", {}).get(user_id)
+    is_shared = shared_role is not None
     if not is_owner and not is_shared:
-        security_log.log_event('ACCESS_DENIED', user_id, {'doc_id': doc_id, 'reason': 'Not authorized to view versions'}, 'WARNING')
+        security_log.log_event(
+            "ACCESS_DENIED",
+            user_id,
+            {"doc_id": doc_id, "reason": "Not authorized to view versions"},
+            "WARNING",
+        )
         flash("You do not have access to this document.")
         return redirect(url_for("documents"))
 
     versions = file_data.get("versions", [])
-    return render_template("versions.html",
+    return render_template(
+        "versions.html",
         filename=file_data["filename"],
         current_version=file_data.get("version", 1),
         current_uploaded_at=file_data["uploaded_at"],
         versions=versions,
-        doc_id=doc_id
+        doc_id=doc_id,
+        can_download=is_owner or shared_role == "editor",
+        can_restore=is_owner,
     )
+
+
 # --- end version history route ---
+
+
+@app.route("/documents/versions/<doc_id>/download/<int:version_number>")
+@require_auth
+def download_document_version(doc_id, version_number):
+    current_session = get_current_session()
+
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir) or not os.path.exists(enc_path):
+        flash("Document not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+    user_id = current_session["user_id"]
+    is_owner = file_data.get("user_id") == user_id
+    shared_role = file_data.get("shared_with", {}).get(user_id)
+    if not is_owner and shared_role != "editor":
+        security_log.log_event(
+            "ACCESS_DENIED",
+            user_id,
+            {"doc_id": doc_id, "reason": "Not authorized to download previous version"},
+            "WARNING",
+        )
+        flash("You do not have permission to download this version.")
+        return redirect(url_for("document_versions", doc_id=doc_id))
+
+    version_record = get_version_record(file_data, version_number)
+    if not version_record:
+        flash("Version not found.")
+        return redirect(url_for("document_versions", doc_id=doc_id))
+
+    security_log.log_event(
+        "FILE_VERSION_DOWNLOADED",
+        user_id,
+        {
+            "filename": file_data["filename"],
+            "doc_id": doc_id,
+            "version": version_number,
+        },
+    )
+    from io import BytesIO
+
+    return send_file(
+        BytesIO(decode_document_bytes(version_record, file_data)),
+        as_attachment=True,
+        download_name=build_version_filename(file_data["filename"], version_number),
+        mimetype=version_record.get(
+            "content_type", file_data.get("content_type", "application/octet-stream")
+        ),
+    )
+
+
+@app.route(
+    "/documents/versions/<doc_id>/restore/<int:version_number>", methods=["POST"]
+)
+@require_auth
+def restore_document_version(doc_id, version_number):
+    current_session = get_current_session()
+
+    if not re.match(r"^[a-f0-9\-]{36}$", doc_id):
+        security_log.log_event(
+            "PATH_TRAVERSAL_ATTEMPT",
+            current_session["user_id"],
+            {"doc_id": doc_id},
+            "WARNING",
+        )
+        return "Bad request", 400
+
+    base_dir = os.path.abspath("data")
+    enc_path = os.path.abspath(os.path.join(base_dir, f"{doc_id}.enc"))
+    if not enc_path.startswith(base_dir) or not os.path.exists(enc_path):
+        flash("Document not found.")
+        return redirect(url_for("documents"))
+
+    file_data = encrypted_storage.load_encrypted(enc_path)
+    user_id = current_session["user_id"]
+    if file_data.get("user_id") != user_id:
+        security_log.log_event(
+            "ACCESS_DENIED",
+            user_id,
+            {"doc_id": doc_id, "reason": "Only owner can restore version"},
+            "WARNING",
+        )
+        flash("Only the document owner can restore previous versions.")
+        return redirect(url_for("document_versions", doc_id=doc_id))
+
+    version_record = get_version_record(file_data, version_number)
+    if not version_record:
+        flash("Version not found.")
+        return redirect(url_for("document_versions", doc_id=doc_id))
+
+    current_version = file_data.get("version", 1)
+    versions = file_data.get("versions", [])
+    versions.append(
+        {
+            "version": current_version,
+            "data": file_data["data"],
+            "content_encoding": file_data.get("content_encoding"),
+            "content_type": file_data.get("content_type", "application/octet-stream"),
+            "uploaded_at": file_data["uploaded_at"],
+            "uploaded_by": file_data["user_id"],
+        }
+    )
+
+    file_data["data"] = version_record["data"]
+    file_data["content_encoding"] = version_record.get("content_encoding")
+    file_data["content_type"] = version_record.get(
+        "content_type", file_data.get("content_type", "application/octet-stream")
+    )
+    file_data["uploaded_at"] = datetime.now().isoformat()
+    file_data["version"] = current_version + 1
+    file_data["versions"] = versions
+
+    encrypted_storage.save_encrypted(enc_path, file_data)
+    security_log.log_event(
+        "FILE_VERSION_RESTORED",
+        user_id,
+        {
+            "filename": file_data["filename"],
+            "doc_id": doc_id,
+            "restored_from": version_number,
+            "version": file_data["version"],
+        },
+    )
+    flash(f"Version v{version_number} restored as the current document.")
+    return redirect(url_for("document_versions", doc_id=doc_id))
 
 
 @app.route("/documents")
@@ -624,16 +1004,18 @@ def documents():
         flash("Please log in first.")
         return redirect(url_for("login"))
 
-    return render_template("documents.html",
+    return render_template(
+        "documents.html",
         username=current_session["username"],
         documents=get_user_documents(current_session["user_id"]),
-        role=current_session["role"]
+        role=current_session["role"],
     )
+
 
 # --- Admin routes added here ---
 @app.route("/admin/dashboard")
 @require_auth
-@require_role('admin')
+@require_role("admin")
 def admin_dashboard():
     current_session = get_current_session()
     all_users = load_users()
@@ -646,20 +1028,26 @@ def admin_dashboard():
                 doc = encrypted_storage.load_encrypted(f"data/{filename}")
                 all_documents.append(doc)
             except Exception as e:
-                security_log.log_event('FILE_LOAD_ERROR', current_session["user_id"], {'filename': filename, 'error': str(e)}, 'ERROR')
+                security_log.log_event(
+                    "FILE_LOAD_ERROR",
+                    current_session["user_id"],
+                    {"filename": filename, "error": str(e)},
+                    "ERROR",
+                )
 
-    security_log.log_event('ADMIN_DASHBOARD_ACCESS', current_session["user_id"], {})
-    return render_template("admin.html",
+    security_log.log_event("ADMIN_DASHBOARD_ACCESS", current_session["user_id"], {})
+    return render_template(
+        "admin.html",
         username=current_session["username"],
         users=all_users,
         documents=all_documents,
-        now=time.time()
+        now=time.time(),
     )
 
 
 @app.route("/admin/users/<user_id>/lock", methods=["POST"])
 @require_auth
-@require_role('admin')
+@require_role("admin")
 def admin_lock_user(user_id):
     current_session = get_current_session()
     users = load_users()
@@ -672,16 +1060,25 @@ def admin_lock_user(user_id):
     action = request.form.get("action")
     if action == "lock":
         target["locked_until"] = time.time() + config.LOCKOUT_DURATION
-        security_log.log_event('ADMIN_USER_LOCKED', current_session["user_id"], {'target_user': user_id}, 'WARNING')
+        security_log.log_event(
+            "ADMIN_USER_LOCKED",
+            current_session["user_id"],
+            {"target_user": user_id},
+            "WARNING",
+        )
         flash(f"User {target['username']} has been locked.")
     elif action == "unlock":
         target["locked_until"] = None
         target["failed_attempts"] = 0
-        security_log.log_event('ADMIN_USER_UNLOCKED', current_session["user_id"], {'target_user': user_id})
+        security_log.log_event(
+            "ADMIN_USER_UNLOCKED", current_session["user_id"], {"target_user": user_id}
+        )
         flash(f"User {target['username']} has been unlocked.")
 
     save_users(users)
     return redirect(url_for("admin_dashboard"))
+
+
 # --- end admin routes ---
 
 
@@ -696,6 +1093,7 @@ def dashboard():
 
     return render_template("dashboard.html", username=current_session["username"])
 
+
 @app.route("/logout")
 def logout():
     token = session.get("session_token")
@@ -706,9 +1104,10 @@ def logout():
     flash("You have been logged out.")
     return redirect(url_for("home"))
 
+
 @app.after_request
 def set_security_headers(response):
-    response.headers['Content-Security-Policy'] = (
+    response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
@@ -717,12 +1116,14 @@ def set_security_headers(response):
         "connect-src 'self'; "
         "frame-ancestors 'none'"
     )
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
-    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
     return response
 
 
@@ -735,10 +1136,8 @@ def require_https():
         return redirect(url, code=301)
 
 
-os.makedirs('data', exist_ok=True)
-os.makedirs('logs', exist_ok=True)
+os.makedirs("data", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
-if __name__ == '__main__':
-    app.run(ssl_context=('cert.pem', 'key.pem'),
-        host='0.0.0.0',
-        port=5000)
+if __name__ == "__main__":
+    app.run(ssl_context=("cert.pem", "key.pem"), host="0.0.0.0", port=5000)
