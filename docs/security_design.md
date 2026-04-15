@@ -6,13 +6,6 @@ Spring 2026
 
 ---
 
-## Table of Contents
-
-1. Architecture Overview
-2. Threat Model
-3. Security Controls
-4. Data Protection
-
 ## 1. Architecture Overview
 
 ### 1.1 System Architecture
@@ -389,13 +382,6 @@ An attacker intercepts traffic on an HTTP connection to steal session cookies.
 
 ### 4.4 Secure Deletion Procedures
 
-Document deletion is not currently implemented. When implemented, the following procedures should be followed:
-
-1. **Overwrite before delete:** Overwrite the `.enc` file with random bytes before removing it from disk
-2. **Remove sharing references:** Remove the document ID from any `shared_with` entries
-3. **Audit log:** Log the deletion event with user ID, document ID, and timestamp
-4. **Version cleanup:** All stored versions within the `.enc` file are deleted together with the document
-
----
-
-CS 419 - Secure Web Application Project | Spring 2026
+1. **Overwrite before delete:** Overwrites the `.enc` file with random bytes before removing it from disk
+2. **Audit log:** Logs the deletion event with user ID, document ID, and timestamp
+3. **Version cleanup:** All stored versions within the `.enc` file are deleted together with the document
