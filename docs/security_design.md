@@ -1,387 +1,154 @@
-# Security Design Document
+# Security Design
 
-**CS 419 - Secure Web Application Project**  
-Secure Document Sharing System  
-Spring 2026
+## Design Goals
 
----
+The project needed a security design that was realistic enough to defend the obvious web-app attacks, but still small enough to build and test quickly. The main goals were:
 
-## 1. Architecture Overview
+- require authentication for anything sensitive
+- separate admin, user, and guest behavior clearly
+- keep uploaded documents unreadable on disk
+- make suspicious activity visible in logs
+- avoid security features that only look good on paper and never got tested
 
-### 1.1 System Architecture
+Because of that, the final design is intentionally simple: one Flask app, local file-based storage, and a handful of controls that we could actually verify end to end.
 
-The Secure Document Sharing System is a web application built using the Python/Flask framework. It follows a single-server architecture with file-based storage, eliminating the need for a database while maintaining structured data organization.
+## System Layout
 
-```text
-┌─────────────────────────────────────────────────────┐
-│                    CLIENT BROWSER                   │
-│         (HTML5 / CSS3 / JavaScript)                 │
-└────────────────────┬────────────────────────────────┘
-                     │ HTTPS (TLS)  Port 5000
-┌────────────────────▼────────────────────────────────┐
-│                  FLASK APPLICATION                  │
-│                                                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │    Routes   │  │  Decorators  │  │  Logging  │  │
-│  │  /login     │  │ require_auth │  │ Security  │  │
-│  │  /register  │  │ require_role │  │  Logger   │  │
-│  │  /documents │  └──────────────┘  └───────────┘  │
-│  │  /admin     │                                    │
-│  └─────────────┘                                    │
-│                                                     │
-│  ┌─────────────────────────────────────────────┐    │
-│  │           Security Middleware               │    │
-│  │  - Security Headers (@after_request)        │    │
-│  │  - HTTPS Redirect (@before_request)         │    │
-│  │  - Session Validation                       │    │
-│  │  - Rate Limiting                            │    │
-│  └─────────────────────────────────────────────┘    │
-└────────────────────┬────────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────────┐
-│                FILE-BASED STORAGE                   │
-│                                                     │
-│  data/                                              │
-│  ├── users.json          (plaintext JSON)           │
-│  ├── sessions.json       (plaintext JSON)           │
-│  └── uuid.enc            (Fernet encrypted)         │
-│                                                     │
-│  logs/                                              │
-│  └── security.log        (append-only log)          │
-└─────────────────────────────────────────────────────┘
-```
-
-### 1.2 Data Flow Diagrams
-
-#### User Authentication Flow
+At a high level, the app looks like this:
 
 ```text
-User → POST /login
-     → Rate limit check (10 req/min per IP)
-     → Load user from users.json
-     → Check account lock status
-     → bcrypt.checkpw(password, hash)
-     → On success: create session token → sessions.json
-     → Set secure cookie (HttpOnly, Secure, SameSite=Strict)
-     → Log event to security.log
-     → Redirect to /dashboard
+Browser
+  |
+  | HTTPS
+  v
+Flask application
+  |- routes and templates
+  |- auth and role decorators
+  |- session validation
+  |- upload / download / sharing logic
+  |- security headers and HTTPS redirect
+  |
+  +--> data/users.json
+  +--> data/sessions.json
+  +--> data/<uuid>.enc
+  +--> logs/security.log
+  +--> secret.key
 ```
 
-#### Document Upload Flow
+Everything runs in a single application process, which makes the trust boundaries easier to reason about:
 
-```text
-User → POST /documents/upload
-     → require_auth (session validation)
-     → Guest role check (blocked if guest)
-     → File extension + MIME type validation
-     → File size check (max 10 MB)
-     → Check for existing filename (versioning)
-     → base64 encode binary data
-     → Fernet encrypt JSON payload
-     → Write uuid.enc to data/
-     → Log FILE_UPLOADED to security.log
-```
+- the browser talks to Flask over HTTPS
+- Flask decides whether a request is allowed
+- the filesystem holds users, sessions, encrypted documents, logs, and the Fernet key
 
-#### Document Download Flow
+## Core Security Decisions
 
-```text
-User → GET /documents/download/<doc_id>
-     → require_auth (session validation)
-     → Guest role check (blocked if guest)
-     → UUID format validation (regex)
-     → Path traversal check (os.path.abspath)
-     → Load + decrypt .enc file
-     → Check owner/editor access role
-     → Log FILE_DOWNLOADED to security.log
-     → Stream file to browser
-```
+### Authentication
 
-#### Document Sharing Flow
+Passwords are hashed with bcrypt before they are stored. The password policy is enforced on the server side, not just in the browser, so weak passwords are rejected even if someone edits the form manually.
 
-```text
-Owner → POST /documents/share/<doc_id>
-      → require_auth (session validation)
-      → UUID format validation
-      → Verify requester is document owner
-      → Validate target username exists
-      → Validate role (editor or viewer)
-      → Update shared_with in .enc file
-      → Log DOCUMENT_SHARED to security.log
-```
+To slow down guessing attacks, the app uses two controls together:
 
-### 1.3 Component Descriptions
+- account lockout after 5 failed login attempts
+- IP-based rate limiting at 10 login attempts per minute
 
-| Component | Description |
+Successful logins create a random session token with `secrets.token_urlsafe(32)`. Session cookies are configured with `HttpOnly`, `Secure`, and `SameSite=Strict`.
+
+### Authorization
+
+The first layer is route-level protection. `require_auth` blocks unauthenticated access, and `require_role("admin")` protects admin-only pages.
+
+The second layer is document-level protection. Even after a user is authenticated, the app still checks whether that user is allowed to access the specific file they asked for.
+
+The access model is:
+
+- admins can reach admin routes and can delete documents when needed
+- normal users can upload their own files and share them
+- guests can sign in, but they cannot upload or download documents
+- shared viewers can open a document in the app, but they cannot download it
+- shared editors can view and download the file
+- only the owner can share a document with someone else
+
+### File Handling and Input Validation
+
+Uploads are restricted by both extension and MIME type. The allowlist is intentionally small: `pdf`, `txt`, `docx`, `png`, `jpg`, and `jpeg`. Files larger than 10 MB are rejected before they are processed.
+
+Document routes also validate the `doc_id` format before touching the filesystem. The app expects a UUID-looking value, and it also checks that the resolved path stays inside the `data/` directory.
+
+For user input, the app keeps things fairly conservative:
+
+- usernames are limited to letters, numbers, and underscores
+- email addresses get basic format validation
+- Jinja auto-escaping is relied on for rendered output
+
+### Encryption and Transport Security
+
+Documents are encrypted before they are written to disk. The application uses Fernet from the `cryptography` package, which gives us both confidentiality and integrity checking. In plain terms, someone who opens a `.enc` file directly should not be able to read the document, and tampering with the ciphertext should break decryption.
+
+The app also enforces HTTPS outside test and debug mode. If a request comes in over HTTP, it is redirected to HTTPS. Responses include common hardening headers like CSP, HSTS, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy`.
+
+### Session Handling
+
+Sessions are stored in `data/sessions.json` with the user ID, username, role, and timestamps. The app treats 30 minutes of inactivity as expired and deletes old sessions when they are encountered.
+
+Logout destroys the server-side session record and clears the client-side session. That means reusing an old cookie after logout should fail, which matched what we saw in testing.
+
+### Logging and Monitoring
+
+The app writes security-relevant events to `logs/security.log`, including failed logins, lockouts, rate-limit hits, denied access, rejected uploads, and path traversal attempts. There is also an access log for normal document actions.
+
+The logging is intentionally plain. It is there so we can answer questions like:
+
+- who tried to access what?
+- was a failure caused by bad credentials or a lockout?
+- did the app reject the request because of permissions, input validation, or file rules?
+
+## Threats We Designed For
+
+These were the main attack paths we cared about while building the app:
+
+| Threat | What we did about it |
 | --- | --- |
-| Flask Application | Core web framework handling routing, request processing, and template rendering |
-| EncryptedStorage | Fernet-based symmetric encryption class for document files |
-| SecurityLogger | Structured JSON event logger writing to `logs/security.log` |
-| SessionManager | File-backed session management with 30-minute timeout |
-| RBAC Decorators | `require_auth` and `require_role` function decorators for access control |
-| Security Headers | `@app.after_request` middleware applying all required HTTP security headers |
-| Rate Limiter | In-memory IP-based rate limiting (10 login attempts per minute) |
+| Brute-force login | bcrypt, failed-login lockout, IP rate limiting |
+| Privilege escalation | route decorators plus per-document ownership checks |
+| IDOR / direct file access | UUID validation, path checks, server-side authorization |
+| Malicious file upload | extension allowlist, MIME allowlist, file-size cap |
+| Session theft | HTTPS, secure cookie flags, logout invalidation, timeout |
+| XSS in rendered pages | Jinja auto-escaping and conservative username validation |
+| Tampering with stored files | Fernet authentication detects invalid ciphertext |
+| Suspicious or abusive behavior | structured security logging |
 
-### 1.4 Technology Stack Justification
+This is not a full formal threat model, but it reflects the actual design choices in the code.
 
-| Technology | Justification |
-| --- | --- |
-| Python 3 / Flask | Lightweight, readable, strong security library ecosystem |
-| bcrypt (rounds=12) | Industry-standard password hashing with configurable work factor |
-| cryptography (Fernet) | Authenticated symmetric encryption - prevents tampering as well as reading |
-| secrets module | Cryptographically secure token generation for sessions |
-| File-based JSON storage | No database setup required per project spec; simple and auditable |
-| Jinja2 templates | Auto-escaping by default prevents XSS in rendered output |
-| TLS (self-signed cert) | Encrypts data in transit for development environment |
+## Data Protection
 
-## 2. Threat Model
+The app stores a small number of sensitive files, and each one is protected differently:
 
-### 2.1 Asset Identification
-
-| Asset | Classification | Description |
+| Data | Location | Protection |
 | --- | --- | --- |
-| User credentials | Critical | Usernames, emails, bcrypt password hashes |
-| Document contents | High | Encrypted files stored as `.enc` |
-| Session tokens | High | 32-byte URL-safe tokens in `sessions.json` |
-| Encryption key | Critical | Fernet key stored in `secret.key` |
-| Security logs | Medium | Event logs containing IP addresses and usernames |
-| User metadata | Medium | Registration timestamps, roles, lock status |
+| Password hashes | `data/users.json` | bcrypt hashing |
+| Session records | `data/sessions.json` | server-side storage, secure cookie transport |
+| Document contents | `data/<uuid>.enc` | Fernet encryption |
+| Security logs | `logs/security.log` | file permissions and append-only usage pattern |
+| Fernet key | `secret.key` | local file only; no extra protection yet |
 
-### 2.2 Threat Enumeration (STRIDE Model)
+Even if someone reads the raw stored file, they should only get ciphertext. The weaker part is secret management: once the host is compromised, a key stored on disk is much easier to steal.
 
-| Threat | Category | Description |
-| --- | --- | --- |
-| Brute force login | Spoofing | Attacker repeatedly guesses passwords |
-| Session hijacking | Spoofing | Attacker steals session cookie to impersonate user |
-| Privilege escalation | Elevation of Privilege | User accesses admin or other user's resources |
-| Path traversal | Tampering | Attacker manipulates `doc_id` to read arbitrary files |
-| XSS injection | Tampering | Attacker injects scripts via filenames or usernames |
-| File upload abuse | Tampering | Attacker uploads malicious or oversized files |
-| Man-in-the-middle | Information Disclosure | Attacker intercepts HTTP traffic |
-| Direct file access | Information Disclosure | Attacker reads `.enc` files from disk |
-| Log tampering | Repudiation | Attacker modifies or deletes security logs |
-| Denial of Service | Denial of Service | Attacker floods login endpoint |
+## Known Gaps and Tradeoffs
 
-### 2.3 Vulnerability Assessment
+The current design is solid for the class project, but a few compromises are still worth being honest about:
 
-| Vulnerability | Likelihood | Impact | Risk Level |
-| --- | --- | --- | --- |
-| Weak password accepted | Low | High | Medium |
-| Session fixation | Low | High | Medium |
-| Path traversal on download | Medium | Critical | High |
-| Unvalidated file upload | Medium | High | High |
-| Hardcoded `SECRET_KEY` | Low | Critical | High |
-| Plaintext key storage (`secret.key`) | Medium | Critical | High |
-| No CSRF token on forms | Medium | Medium | Medium |
-| Debug mode enabled | Low | High | Medium |
+- the Fernet key is stored on disk in `secret.key`
+- login rate limiting is in memory, so it resets if the server restarts
+- forms do not use dedicated CSRF tokens; protection is mostly coming from session handling and `SameSite=Strict`
+- the CSP still allows `unsafe-inline` for scripts and styles
+- the password change endpoint does not currently have its own rate limiting
+- secure deletion is best effort only on modern storage hardware
 
-### 2.4 Attack Scenarios
+None of these issues cancel out the rest of the design, but they are the first places we would revisit if this project moved beyond a classroom environment.
 
-#### Scenario 1: Brute Force Login
+## Why This Design Works for the Project
 
-An attacker attempts to guess a user's password by sending repeated POST requests to `/login`.
+The biggest strength of the design is that it stays close to the code. We did not add security mechanisms just to list them in a report. The controls in this document are the ones that were actually implemented and exercised during testing.
 
-**Mitigation:** Account lockout after 5 failed attempts (15 min), rate limit of 10 requests/min per IP, bcrypt with cost factor 12 slows offline guessing.
-
-#### Scenario 2: Path Traversal on Download
-
-An attacker sends a request to `/documents/download/../data/users` to read the users file.
-
-**Mitigation:** UUID regex validation rejects non-UUID `doc_id`s; `os.path.abspath` comparison ensures path stays within `data/`.
-
-#### Scenario 3: Privilege Escalation
-
-A standard user manually crafts a request to `/admin/dashboard`.
-
-**Mitigation:** `@require_role('admin')` decorator checks session role and returns 403 with an `ACCESS_DENIED` log event.
-
-#### Scenario 4: Malicious File Upload
-
-An attacker uploads a `.php` or `.exe` file disguised with a fake extension.
-
-**Mitigation:** Both file extension and MIME type are validated against an allowlist before the file is processed.
-
-#### Scenario 5: Man-in-the-Middle
-
-An attacker intercepts traffic on an HTTP connection to steal session cookies.
-
-**Mitigation:** HTTPS enforced via TLS; `Strict-Transport-Security` header set; session cookie has `Secure=True` flag.
-
-### 2.5 Risk Prioritization
-
-| Priority | Risk | Status |
-| --- | --- | --- |
-| 1 | Path traversal | Mitigated |
-| 2 | Unvalidated file uploads | Mitigated |
-| 3 | Brute force / credential stuffing | Mitigated |
-| 4 | Session hijacking | Mitigated (secure cookies + HTTPS) |
-| 5 | Privilege escalation | Mitigated (RBAC decorators) |
-| 6 | Plaintext key storage (`secret.key`) | Partially mitigated |
-| 7 | CSRF on state-changing forms | Partially mitigated (SameSite=Strict) |
-
-## 3. Security Controls
-
-### A. User Authentication (15 points)
-
-**Control Description:** Secure user registration and login with strong password requirements and account protection mechanisms.
-
-**Implementation:**
-
-- Passwords hashed with bcrypt (cost factor 12) - never stored in plaintext
-- Password requirements: minimum 12 characters, uppercase, lowercase, number, special character
-- Account lockout after 5 failed attempts for 15 minutes
-- Rate limiting: maximum 10 login attempts per IP per minute
-- Session token generated with `secrets.token_urlsafe(32)`
-
-**Testing Methodology:** Attempt login with wrong password 5 times - verify account locks. Send 11 rapid requests - verify rate limit. Check `users.json` for bcrypt hash format (`$2b$12$...`).
-
-**Known Limitations:** Rate limiting is in-memory and resets on server restart. No multi-factor authentication.
-
-**Mitigation Strategies:** Persist rate limit data to file. Add TOTP-based MFA for high-security accounts.
-
-### B. Access Control (15 points)
-
-**Control Description:** Role-based access control (RBAC) with three roles: Admin, User, and Guest.
-
-**Implementation:**
-
-- `require_auth` decorator validates active session before any protected route
-- `require_role(role)` decorator checks session role against required role
-- Admin: full access including user management and all documents
-- User: upload, download own/shared docs, share documents
-- Guest: read-only - can view document list but cannot upload or download
-
-**Testing Methodology:** Log in as guest and attempt upload - expect redirect. Log in as user and attempt `/admin/dashboard` - expect 403. Attempt to download a viewer-only shared document - expect access denied.
-
-**Known Limitations:** `require_role` checks exact role match - admin cannot use user-level decorators without modification.
-
-**Mitigation Strategies:** Extend `require_role` to accept a list of allowed roles.
-
-### C. Input Validation & Injection Prevention (20 points)
-
-**Control Description:** Whitelist-based validation of all user inputs and uploaded files to prevent injection attacks.
-
-**Implementation:**
-
-- Username: regex `^\w{3,20}$` (alphanumeric + underscore, 3-20 chars)
-- Email: regex format validation
-- Password: length + complexity requirements enforced server-side
-- File uploads: allowlist of extensions (`pdf`, `txt`, `docx`, `png`, `jpg`, `jpeg`) and MIME types
-- File size: maximum 10 MB enforced before processing
-- Document IDs: UUID regex rejects path traversal attempts
-- XSS: Jinja2 auto-escaping enabled on all template variables
-- Path traversal: `os.path.abspath` comparison keeps file access within `data/`
-
-**Testing Methodology:** Upload `.exe` and `.php` files - verify rejection. Submit `<script>alert(1)</script>` as username - verify escaped output. Request `/documents/download/../data/users` - verify 400.
-
-**Known Limitations:** MIME type can be spoofed. No magic byte checking or malware scanning.
-
-**Mitigation Strategies:** Use `python-magic` for magic byte validation. Integrate ClamAV for malware scanning.
-
-### D. Encryption (15 points)
-
-**Control Description:** Encryption of data in transit (TLS) and data at rest (Fernet symmetric encryption).
-
-**Implementation:**
-
-- Transport: TLS via self-signed certificate, Flask `ssl_context`
-- HTTPS redirect via `@app.before_request`
-- HSTS header: `max-age=31536000; includeSubDomains`
-- Data at rest: Fernet (AES-128-CBC + HMAC-SHA256) for all document files
-- Encryption key stored in `secret.key`, generated on first run
-- Binary data base64-encoded before encryption
-
-**Testing Methodology:** Open a `.enc` file in a text editor - verify unreadable ciphertext. Send HTTP request - verify redirect to HTTPS. Check response headers for `Strict-Transport-Security`.
-
-**Known Limitations:** Self-signed certificate generates browser warnings. Encryption key stored in plaintext on disk.
-
-**Mitigation Strategies:** Use a CA-signed certificate for production. Store key in environment variable or HSM.
-
-### E. Session Management (15 points)
-
-**Control Description:** Secure file-backed session management with timeout and secure cookie configuration.
-
-**Implementation:**
-
-- Session tokens: `secrets.token_urlsafe(32)` - 256-bit cryptographically secure
-- Sessions stored in `data/sessions.json` with user ID, role, timestamps
-- 30-minute inactivity timeout
-- Session destroyed on logout
-- Cookie flags: `HttpOnly=True`, `Secure=True`, `SameSite=Strict`
-- Flask `SECRET_KEY` loaded from environment variable
-
-**Testing Methodology:** Log in, wait 31 minutes, attempt dashboard access - verify redirect to login. Log out and reuse old token - verify invalid. Check cookie flags in browser DevTools.
-
-**Known Limitations:** No concurrent session detection. Sessions file grows without cleanup.
-
-**Mitigation Strategies:** Add periodic cleanup of expired sessions. Implement single active session per user.
-
-### F. Security Headers (10 points)
-
-**Control Description:** HTTP response headers instructing the browser to apply additional security policies.
-
-| Header | Value | Purpose |
-| --- | --- | --- |
-| Content-Security-Policy | `default-src 'self'` | Restricts resource loading to same origin |
-| X-Frame-Options | `DENY` | Prevents clickjacking via iframes |
-| X-Content-Type-Options | `nosniff` | Prevents MIME type sniffing |
-| X-XSS-Protection | `1; mode=block` | Legacy XSS filter for older browsers |
-| Referrer-Policy | `strict-origin-when-cross-origin` | Limits referrer information leakage |
-| Permissions-Policy | `geolocation=(), microphone=(), camera=()` | Disables sensitive browser APIs |
-| Strict-Transport-Security | `max-age=31536000; includeSubDomains` | Enforces HTTPS for 1 year |
-
-**Testing Methodology:** Use browser DevTools -> Network -> Response Headers to verify all headers. Use `securityheaders.com` to scan.
-
-**Known Limitations:** CSP uses `unsafe-inline` for scripts and styles - acceptable for development.
-
-### G. Logging & Monitoring (10 points)
-
-**Control Description:** Structured JSON security event logging for audit trail and incident response.
-
-**Implementation:** `SecurityLogger` class writes JSON entries to `logs/security.log`. Each entry includes timestamp (UTC ISO), event type, user ID, IP address, details, and severity.
-
-**Events Logged:** `LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGIN_BLOCKED`, `ACCOUNT_LOCKED`, `RATE_LIMITED`, `FILE_UPLOADED`, `FILE_DOWNLOADED`, `FILE_VERSION_UPLOADED`, `UPLOAD_REJECTED`, `DOCUMENT_SHARED`, `ACCESS_DENIED`, `PATH_TRAVERSAL_ATTEMPT`, `ADMIN_DASHBOARD_ACCESS`, `ADMIN_USER_LOCKED`, `ADMIN_USER_UNLOCKED`, `FILE_LOAD_ERROR`.
-
-**Testing Methodology:** Trigger a failed login - verify `WARNING` entry in `security.log`. Upload a file - verify `FILE_UPLOADED` entry. Attempt path traversal - verify `PATH_TRAVERSAL_ATTEMPT` entry.
-
-**Known Limitations:** Logs stored on same server. No real-time alerting.
-
-**Mitigation Strategies:** Ship logs to remote syslog or SIEM. Add alerting for `CRITICAL` events.
-
-## 4. Data Protection
-
-### 4.1 Data Classification
-
-| Data | Classification | Storage Location | Encrypted |
-| --- | --- | --- | --- |
-| Password hashes | Confidential | `data/users.json` | bcrypt hashed |
-| Document contents | Confidential | `data/uuid.enc` | Yes (Fernet) |
-| Session tokens | Confidential | `data/sessions.json` | No |
-| Encryption key | Secret | `secret.key` | No |
-| User metadata | Internal | `data/users.json` | No |
-| Security logs | Internal | `logs/security.log` | No |
-
-### 4.2 Encryption Methods
-
-**Password Hashing:** bcrypt with cost factor 12. Each password has a unique random salt. Output is a 60-character hash stored in `users.json`.
-
-**Document Encryption:** Fernet (AES-128-CBC with PKCS7 padding + HMAC-SHA256 authentication). Provides both confidentiality and integrity - tampering with a `.enc` file is detected on decryption. Binary document data is base64-encoded before encryption to handle all file types.
-
-**Transport Encryption:** TLS via HTTPS. Self-signed RSA-4096 certificate for development. HSTS enforced to prevent downgrade attacks.
-
-### 4.3 Key Management
-
-**Fernet Encryption Key:** Generated once using `Fernet.generate_key()` on first startup. Stored in `secret.key` in the project root. All documents share the same key. Key loss means all encrypted documents are permanently unrecoverable.
-
-**Flask Secret Key:** Loaded from the `SECRET_KEY` environment variable at startup. Falls back to a randomly generated key if not set. Used for Flask session signing.
-
-**Recommended Production Improvements:**
-
-- Store Fernet key in an environment variable or secrets manager
-- Rotate keys periodically with re-encryption of existing documents
-- Use per-document encryption keys derived from a master key
-
-### 4.4 Secure Deletion Procedures
-
-1. **Overwrite before delete:** Overwrites the `.enc` file with random bytes before removing it from disk
-2. **Audit log:** Logs the deletion event with user ID, document ID, and timestamp
-3. **Version cleanup:** All stored versions within the `.enc` file are deleted together with the document
+That makes the system easier to explain and easier to trust. It is a small Flask app with a small set of well-understood controls: strong password handling, role checks, encrypted document storage, secure session settings, HTTPS enforcement, and useful logging. For the scope of this project, that is the right level of complexity.
