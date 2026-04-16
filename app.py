@@ -379,6 +379,7 @@ def login():
             token = create_session(user)
             session["session_token"] = token
 
+            security_log.log_event("SESSION_CREATED", user["id"], {"username": username})
             access_log.log_event("LOGIN_SUCCESS", user["id"], {"username": username})
             flash("Login successful.")
             return redirect(url_for("dashboard"))
@@ -868,11 +869,13 @@ def delete_document(doc_id):
         return redirect(url_for("documents"))
 
     file_data = encrypted_storage.load_encrypted(enc_path)
-    if file_data.get("user_id") != current_session["user_id"]:
+    is_owner = file_data.get("user_id") == current_session["user_id"]
+    is_admin = current_session["role"] == "admin"
+    if not is_owner and not is_admin:
         security_log.log_event(
             "ACCESS_DENIED",
             current_session["user_id"],
-            {"doc_id": doc_id, "reason": "Only owner can delete"},
+            {"doc_id": doc_id, "reason": "Only owner or admin can delete"},
             "WARNING",
         )
         flash("Only the document owner can delete it.")
@@ -1248,6 +1251,7 @@ def logout():
         destroy_session(token)
 
     if current_session:
+        security_log.log_event("SESSION_DESTROYED", current_session["user_id"], {})
         access_log.log_event("LOGOUT", current_session["user_id"], {})
 
     session.clear()
