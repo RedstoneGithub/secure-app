@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm list:*)",
+      "Bash(where node:*)",
+      "Bash(where npm:*)",
+      "Bash(venv/Scripts/python.exe -c \"import pptx; print\\('available'\\)\")",
+      "Bash(venv/Scripts/pip.exe install:*)",
+      "Bash(pip install:*)",
+      "Bash(python \"C:\\\\Users\\\\nilay\\\\OneDrive\\\\Documents\\\\CS419-FinalProj\\\\presentation\\\\build_pptx.py\")"
+    ]
+  }
+}
