@@ -398,6 +398,11 @@ class TestLogin(BaseTestCase):
         self.assertNotIn(b"dashboard", resp.data.lower())
         self.assertIn(b"lock", resp.data.lower())
 
+    def test_locked_account_attempt_logged(self):
+        self._seed_user(locked=time.time() + 900)
+        self._login()
+        self.assertTrue(_has_event(self.security_log_file, "LOGIN_BLOCKED"))
+
     def test_rate_limit_blocks_11th_attempt(self):
         self._seed_user()
         for _ in range(11):
@@ -549,6 +554,34 @@ class TestAccessControl(BaseTestCase):
         resp = self.client.get(f"/documents/download/{doc_id}")
         self.assertEqual(resp.status_code, 200)
 
+    def test_stranger_cannot_view_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="stranger", uid="u_stranger")
+        self._login(username="owner")
+        self._upload(filename="private.txt", content=b"private")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        self.client.get("/logout")
+        self._login(username="stranger")
+        resp = self.client.get(f"/documents/view/{doc_id}", follow_redirects=False)
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(_has_event(self.security_log_file, "ACCESS_DENIED"))
+
+    def test_stranger_cannot_view_version_history(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="stranger", uid="u_stranger")
+        self._login(username="owner")
+        self._upload(filename="private.txt", content=b"private")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        self.client.get("/logout")
+        self._login(username="stranger")
+        resp = self.client.get(f"/documents/versions/{doc_id}", follow_redirects=False)
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(_has_event(self.security_log_file, "ACCESS_DENIED"))
+
     def test_non_owner_cannot_share(self):
         self._seed_user(username="owner", uid="u_owner")
         self._seed_user(username="other", uid="u_other")
@@ -565,6 +598,26 @@ class TestAccessControl(BaseTestCase):
         )
         doc = encrypted_storage.load_encrypted(f"data/{doc_id}.enc")
         self.assertNotIn("u_target", doc.get("shared_with", {}))
+
+    def test_non_owner_cannot_restore_previous_version(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="other", uid="u_other")
+        self._login(username="owner")
+        self._upload(filename="report.txt", content=b"v1")
+        self._upload(filename="report.txt", content=b"v2")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        self.client.get("/logout")
+        self._login(username="other")
+        resp = self.client.post(
+            f"/documents/versions/{doc_id}/restore/1", follow_redirects=False
+        )
+
+        self.assertEqual(resp.status_code, 302)
+        doc = encrypted_storage.load_encrypted(f"data/{doc_id}.enc")
+        self.assertEqual(doc["version"], 2)
+        self.assertEqual(flask_app.decode_document_bytes(doc), b"v2")
+        self.assertTrue(_has_event(self.security_log_file, "ACCESS_DENIED"))
 
     def test_access_denied_logged(self):
         self._seed_user(role="user")
@@ -598,6 +651,21 @@ class TestAccessControl(BaseTestCase):
         victim = next(u for u in users if u["username"] == "victim")
         self.assertIsNone(victim["locked_until"])
         self.assertEqual(victim["failed_attempts"], 0)
+
+    def test_admin_can_delete_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="admin", uid="u_admin", role="admin")
+        self._login(username="owner")
+        self._upload(filename="admin-delete.txt", content=b"bye")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        self.client.get("/logout")
+        resp = self._login(username="admin")
+        self.assertIn(b"dashboard", resp.data.lower())
+
+        resp = self.client.post(f"/documents/delete/{doc_id}", follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(os.path.exists(os.path.join("data", f"{doc_id}.enc")))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -642,6 +710,54 @@ class TestInputValidation(BaseTestCase):
             len([f for f in os.listdir("data") if f.endswith(".enc")]), 0
         )
 
+    def test_upload_allowed_docx(self):
+        self._seed_user()
+        self._login()
+        self._upload(
+            filename="report.docx",
+            content=b"PK fake docx",
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        self.assertGreater(
+            len([f for f in os.listdir("data") if f.endswith(".enc")]), 0
+        )
+
+    def test_upload_allowed_png(self):
+        self._seed_user()
+        self._login()
+        self._upload(
+            filename="photo.png",
+            content=b"\x89PNG\r\n\x1a\n",
+            mimetype="image/png",
+        )
+        self.assertGreater(
+            len([f for f in os.listdir("data") if f.endswith(".enc")]), 0
+        )
+
+    def test_upload_allowed_jpg(self):
+        self._seed_user()
+        self._login()
+        self._upload(
+            filename="photo.jpg",
+            content=b"\xff\xd8\xff\xe0",
+            mimetype="image/jpeg",
+        )
+        self.assertGreater(
+            len([f for f in os.listdir("data") if f.endswith(".enc")]), 0
+        )
+
+    def test_upload_allowed_jpeg(self):
+        self._seed_user()
+        self._login()
+        self._upload(
+            filename="photo.jpeg",
+            content=b"\xff\xd8\xff\xe0",
+            mimetype="image/jpeg",
+        )
+        self.assertGreater(
+            len([f for f in os.listdir("data") if f.endswith(".enc")]), 0
+        )
+
     def test_upload_oversized_file_rejected(self):
         self._seed_user()
         self._login()
@@ -677,13 +793,10 @@ class TestInputValidation(BaseTestCase):
         )
 
     def test_path_traversal_logged(self):
-        # Use a UUID-like string with a null byte or special char that passes
-        # Flask routing but fails our regex — this exercises the handler's check.
         self._seed_user()
         self._login()
         self.client.get("/documents/download/not-a-valid-uuid!!!")
-        # PATH_TRAVERSAL_ATTEMPT is logged for bad doc_ids caught by the handler
-        # (Flask normalizes ../ before routing so those never reach our code)
+        self.assertTrue(_has_event(self.security_log_file, "PATH_TRAVERSAL_ATTEMPT"))
 
     def test_xss_not_rendered_raw(self):
         """Raw <script> tags must not appear unescaped in any response."""
@@ -912,6 +1025,11 @@ class TestLogging(BaseTestCase):
             self._login()
         self.assertTrue(_has_event(self.security_log_file, "RATE_LIMITED"))
 
+    def test_login_blocked_logged(self):
+        self._seed_user(locked=time.time() + 900)
+        self._login()
+        self.assertTrue(_has_event(self.security_log_file, "LOGIN_BLOCKED"))
+
     def test_file_uploaded_logged(self):
         self._seed_user()
         self._login()
@@ -926,6 +1044,41 @@ class TestLogging(BaseTestCase):
         doc_id = enc_files[0].replace(".enc", "")
         self.client.get(f"/documents/download/{doc_id}")
         self.assertTrue(_has_event(self.access_log_file, "FILE_DOWNLOADED"))
+
+    def test_file_viewed_logged(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="view.txt", content=b"view me")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.get(f"/documents/view/{doc_id}")
+        self.assertTrue(_has_event(self.access_log_file, "FILE_VIEWED"))
+
+    def test_document_versions_access_logged(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="report.txt", content=b"v1")
+        self._upload(filename="report.txt", content=b"v2")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.get(f"/documents/versions/{doc_id}")
+        self.assertTrue(_has_event(self.access_log_file, "DOCUMENT_VERSIONS_ACCESSED"))
+
+    def test_file_version_downloaded_logged(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="report.txt", content=b"v1")
+        self._upload(filename="report.txt", content=b"v2")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.get(f"/documents/versions/{doc_id}/download/1")
+        self.assertTrue(_has_event(self.access_log_file, "FILE_VERSION_DOWNLOADED"))
+
+    def test_file_version_restored_logged(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="report.txt", content=b"v1")
+        self._upload(filename="report.txt", content=b"v2")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.post(f"/documents/versions/{doc_id}/restore/1")
+        self.assertTrue(_has_event(self.access_log_file, "FILE_VERSION_RESTORED"))
 
     def test_access_denied_logged(self):
         self._seed_user(role="user")
@@ -942,11 +1095,8 @@ class TestLogging(BaseTestCase):
     def test_path_traversal_logged(self):
         self._seed_user()
         self._login()
-        # Use an ID with a slash — Flask routes it but our handler rejects it
         self.client.get("/documents/download/not-a-uuid!!!")
-        # Non-UUID IDs caught by regex return 400 (no log); but UUID-format IDs
-        # with path chars are caught by abspath check and logged.
-        # Here we just verify the 400 path works without crashing.
+        self.assertTrue(_has_event(self.security_log_file, "PATH_TRAVERSAL_ATTEMPT"))
 
     def test_document_shared_logged(self):
         self._seed_user(username="owner", uid="u_owner")
@@ -985,6 +1135,28 @@ class TestLogging(BaseTestCase):
         self._login()
         self.client.get("/documents")
         self.assertTrue(_has_event(self.access_log_file, "DOCUMENTS_ACCESSED"))
+
+    def test_session_destroyed_logged(self):
+        self._seed_user()
+        self._login()
+        self.client.get("/logout")
+        self.assertTrue(_has_event(self.security_log_file, "SESSION_DESTROYED"))
+
+    def test_admin_lock_user_logged(self):
+        self._seed_user(username="admin", uid="u_admin", role="admin")
+        self._seed_user(username="victim", uid="u_victim")
+        self._login(username="admin")
+        self.client.post("/admin/users/u_victim/lock", data={"action": "lock"})
+        self.assertTrue(_has_event(self.security_log_file, "ADMIN_USER_LOCKED"))
+
+    def test_admin_unlock_user_logged(self):
+        self._seed_user(username="admin", uid="u_admin", role="admin")
+        self._seed_user(
+            username="victim", uid="u_victim", locked=time.time() + 900, failed=5
+        )
+        self._login(username="admin")
+        self.client.post("/admin/users/u_victim/lock", data={"action": "unlock"})
+        self.assertTrue(_has_event(self.security_log_file, "ADMIN_USER_UNLOCKED"))
 
     def test_password_changed_logged_to_security_log(self):
         self._seed_user()
@@ -1089,6 +1261,28 @@ class TestDocumentFeatures(BaseTestCase):
         self.assertEqual(doc["version"], 3)
         self.assertEqual(flask_app.decode_document_bytes(doc), b"v1 content")
         self.assertEqual(len(doc.get("versions", [])), 2)
+
+    def test_missing_version_download_redirects(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="report.txt", content=b"v1 content")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        resp = self.client.get(
+            f"/documents/versions/{doc_id}/download/99", follow_redirects=False
+        )
+        self.assertEqual(resp.status_code, 302)
+
+    def test_missing_version_restore_redirects(self):
+        self._seed_user()
+        self._login()
+        self._upload(filename="report.txt", content=b"v1 content")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+
+        resp = self.client.post(
+            f"/documents/versions/{doc_id}/restore/99", follow_redirects=False
+        )
+        self.assertEqual(resp.status_code, 302)
 
     def test_share_editor_recorded(self):
         self._seed_user(username="owner", uid="u_owner")

@@ -6,7 +6,7 @@ This folder contains all testing resources for the CS 419 Secure Document Sharin
 
 | File | Description |
 |---|---|
-| `test_app.py` | 103 automated tests covering all rubric requirements |
+| `test_app.py` | 137 automated tests covering every rubric section and document workflow |
 | `MANUAL_TESTING.md` | Step-by-step manual testing guide (browser + terminal) |
 
 ## Running the automated tests
@@ -19,7 +19,7 @@ source venv/bin/activate     # Mac/Linux
 # Install pytest if not already installed
 pip install pytest
 
-# Run all 103 tests
+# Run all automated tests
 python -m pytest tests/test_app.py -v
 
 # Run a specific section
@@ -39,16 +39,17 @@ python -m pytest tests/test_app.py -x -v
 
 | Test class | Rubric section | Tests |
 |---|---|---|
-| `TestRegistrationValidation` | A. Authentication — registration | 17 |
-| `TestLogin` | A. Authentication — login | 12 |
-| `TestAccessControl` | B. Access Control | 14 |
-| `TestInputValidation` | C. Input Validation & Injection | 14 |
+| `TestRegistrationValidation` | A. Authentication — registration | 19 |
+| `TestLogin` | A. Authentication — login | 13 |
+| `TestPasswordChange` | A. Authentication — password change | 3 |
+| `TestAccessControl` | B. Access Control | 18 |
+| `TestInputValidation` | C. Input Validation & Injection | 18 |
 | `TestEncryption` | D. Encryption | 4 |
 | `TestSessionManagement` | E. Session Management | 10 |
 | `TestSecurityHeaders` | F. Security Headers | 10 |
-| `TestLogging` | G. Logging & Monitoring | 12 |
-| `TestDocumentFeatures` | Core features | 8 |
-| **Total** | | **103** |
+| `TestLogging` | G. Logging & Monitoring | 25 |
+| `TestDocumentFeatures` | Core features | 17 |
+| **Total** | | **137** |
 
 ## Manual testing
 

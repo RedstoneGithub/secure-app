@@ -436,7 +436,7 @@ Try to:
 ## Running the Automated Tests
 
 ```bash
-# Run all 103 automated tests (covers all sections above)
+# Run all automated tests (covers all sections above)
 python -m pytest tests/test_app.py -v
 
 # Run a specific section
@@ -448,4 +448,4 @@ python -m pytest tests/test_app.py::TestAccessControl -v
 python -m pytest tests/test_app.py -x -v
 ```
 
-All 103 tests should pass.
+All 137 tests should pass.

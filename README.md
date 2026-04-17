@@ -93,15 +93,24 @@ CS419-FinalProj/
 │   ├── sessions.json   # Active sessions
 │   └── *.enc           # Encrypted documents
 ├── logs/
-│   └── security.log    # Structured security event log
+│   ├── security.log    # Security events and warnings
+│   └── access.log      # Authentication and document activity log
 ├── static/
 │   ├── css/
 │   └── js/
 ├── templates/          # Jinja2 HTML templates
-├── docs/               # Security design document and pentest report
-├── tests/              # Test scripts
+├── docs/               # Security design document and pentest report PDFs
+├── tests/              # Automated test suite and manual verification guide
 └── presentation/       # Presentation slides
 ```
+
+## Testing
+
+- Automated coverage: `137` passing tests in `tests/test_app.py`
+- Manual verification guide: `tests/MANUAL_TESTING.md`
+- Run the suite with `python -m pytest tests/test_app.py -v`
+
+The automated suite covers registration, login, password changes, RBAC, upload validation, encryption, session handling, security headers, audit logging, sharing, deletion, viewing, and version restore/download flows.
 
 ## User Roles
 
