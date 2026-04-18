@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 ### 4. TLS certificate
 
-A self-signed `cert.pem` and `key.pem` are included in the repository for convenience. You can use them directly — no extra steps needed.
+A self-signed `cert.pem` and `key.pem` are included in the repository for convenience. You can use them directly , no extra steps needed.
 
 If you prefer to generate your own:
 
@@ -140,8 +140,3 @@ The automated suite covers registration, login, password changes, RBAC, upload v
 | Input validation | Whitelist regex on usernames, MIME + extension checks on uploads |
 | Path traversal prevention | UUID regex validation + `os.path.abspath` boundary check |
 | Audit logging | Structured JSON log for all security events |
-
-## Building the PDFs
-
-Install pandoc and the xelatex engine
-Run `pandoc ".\docs\pentest_report.md"  -o ".\docs\pentest_report.pdf" --pdf-engine=xelatex --toc --toc-depth=2 --number-sections --syntax-highlighting=tango -V mainfont="Segoe UI" -V sansfont="Segoe UI" -V monofont="Consolas" -V geometry:margin=1in -V fontsize=11pt -V linestretch=1.15 -V colorlinks=true -V linkcolor=blue -V urlcolor=blue`
