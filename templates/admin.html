@@ -88,6 +88,7 @@
                 <th>Version</th>
                 <th>Uploaded At</th>
                 <th>Shared With</th>
+                <th>Actions</th>
             </tr>
             {% for doc in documents %}
                 <tr>
@@ -97,6 +98,14 @@
                     <td>v{{ doc.version if doc.version else 1 }}</td>
                     <td>{{ doc.uploaded_at }}</td>
                     <td>{{ doc.shared_with | length if doc.shared_with else 0 }} user(s)</td>
+                    <td>
+                        <a href="/documents/view/{{ doc.id }}">Open</a> |
+                        <a href="/documents/download/{{ doc.id }}">Download</a> |
+                        <a href="/documents/versions/{{ doc.id }}">Versions</a> |
+                        <form method="POST" action="/documents/delete/{{ doc.id }}" style="display:inline;">
+                            <button type="submit" onclick="return confirm('Delete this document?')">Delete</button>
+                        </form>
+                    </td>
                 </tr>
             {% endfor %}
         </table>
