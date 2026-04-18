@@ -694,11 +694,12 @@ def download_document(doc_id):
         flash("File not found.")
         return redirect(url_for("documents"))
 
-    # Check access — must be owner or editor (viewers cannot download)
+    # Check access — must be owner, editor, or admin (viewers cannot download)
     user_id = current_session["user_id"]
     is_owner = file_data.get("user_id") == user_id
+    is_admin = current_session["role"] == "admin"
     shared_role = file_data.get("shared_with", {}).get(user_id)
-    if not is_owner and shared_role != "editor":
+    if not is_owner and not is_admin and shared_role != "editor":
         security_log.log_event(
             "ACCESS_DENIED",
             user_id,
@@ -756,8 +757,9 @@ def view_document(doc_id):
     file_data = encrypted_storage.load_encrypted(enc_path)
     user_id = current_session["user_id"]
     is_owner = file_data.get("user_id") == user_id
+    is_admin = current_session["role"] == "admin"
     is_shared = user_id in file_data.get("shared_with", {})
-    if not is_owner and not is_shared:
+    if not is_owner and not is_admin and not is_shared:
         security_log.log_event(
             "ACCESS_DENIED",
             user_id,
@@ -908,12 +910,13 @@ def document_versions(doc_id):
 
     file_data = encrypted_storage.load_encrypted(enc_path)
 
-    # Must be owner or shared user to view versions
+    # Must be owner, shared user, or admin to view versions
     user_id = current_session["user_id"]
     is_owner = file_data.get("user_id") == user_id
+    is_admin = current_session["role"] == "admin"
     shared_role = file_data.get("shared_with", {}).get(user_id)
     is_shared = shared_role is not None
-    if not is_owner and not is_shared:
+    if not is_owner and not is_admin and not is_shared:
         security_log.log_event(
             "ACCESS_DENIED",
             user_id,
@@ -963,8 +966,9 @@ def download_document_version(doc_id, version_number):
     file_data = encrypted_storage.load_encrypted(enc_path)
     user_id = current_session["user_id"]
     is_owner = file_data.get("user_id") == user_id
+    is_admin = current_session["role"] == "admin"
     shared_role = file_data.get("shared_with", {}).get(user_id)
-    if not is_owner and shared_role != "editor":
+    if not is_owner and not is_admin and shared_role != "editor":
         security_log.log_event(
             "ACCESS_DENIED",
             user_id,
