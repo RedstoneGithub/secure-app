@@ -44,7 +44,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Generate a self-signed TLS certificate
+### 4. TLS certificate
+
+A self-signed `cert.pem` and `key.pem` are included in the repository for convenience. You can use them directly — no extra steps needed.
+
+If you prefer to generate your own:
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
@@ -85,9 +89,9 @@ CS419-FinalProj/
 ├── app.py              # Main application — routes, auth, encryption, logging
 ├── config.py           # All configuration constants
 ├── requirements.txt    # Python dependencies
-├── cert.pem            # TLS certificate (generated locally, not committed)
-├── key.pem             # TLS private key  (generated locally, not committed)
-├── secret.key          # Fernet encryption key (auto-generated on first run)
+├── cert.pem            # TLS certificate (self-signed, included for convenience)
+├── key.pem             # TLS private key  (included for convenience)
+├── secret.key          # Fernet encryption key (included for convenience)
 ├── data/               # JSON data store (auto-created on first run)
 │   ├── users.json      # User accounts
 │   ├── sessions.json   # Active sessions

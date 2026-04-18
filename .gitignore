@@ -208,9 +208,12 @@ __marimo__/
 
 # Local data files
 data/
+encrypted_files/
+uploads/
 secret.key
 cert.pem
 key.pem
 
 # Logs
+logs/
 *.log
