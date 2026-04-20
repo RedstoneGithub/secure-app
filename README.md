@@ -89,9 +89,9 @@ CS419-FinalProj/
 ├── app.py              # Main application — routes, auth, encryption, logging
 ├── config.py           # All configuration constants
 ├── requirements.txt    # Python dependencies
-├── cert.pem            # TLS certificate (self-signed, included for convenience)
-├── key.pem             # TLS private key  (included for convenience)
-├── secret.key          # Fernet encryption key (included for convenience)
+├── cert.pem            # TLS certificate (self-signed)
+├── key.pem             # TLS private key
+├── secret.key          # Fernet encryption key
 ├── data/               # JSON data store (auto-created on first run)
 │   ├── users.json      # User accounts
 │   ├── sessions.json   # Active sessions
@@ -99,9 +99,6 @@ CS419-FinalProj/
 ├── logs/
 │   ├── security.log    # Security events and warnings
 │   └── access.log      # Authentication and document activity log
-├── static/
-│   ├── css/
-│   └── js/
 ├── templates/          # Jinja2 HTML templates
 ├── docs/               # Security design document and pentest report PDFs
 ├── tests/              # Automated test suite and manual verification guide
