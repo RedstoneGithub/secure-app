@@ -181,10 +181,13 @@ class BaseTestCase(unittest.TestCase):
         filename="doc.txt",
         content=b"hello",
         mimetype="text/plain",
+        doc_id=None,
         follow_redirects=True,
     ):
         before = set(f for f in os.listdir("data") if f.endswith(".enc"))
         data = {"file": (BytesIO(content), filename, mimetype)}
+        if doc_id is not None:
+            data["doc_id"] = doc_id
         resp = self.client.post(
             "/documents/upload",
             data=data,
@@ -553,6 +556,51 @@ class TestAccessControl(BaseTestCase):
         self._login(username="editor")
         resp = self.client.get(f"/documents/download/{doc_id}")
         self.assertEqual(resp.status_code, 200)
+
+    def test_editor_can_upload_new_version_of_shared_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="editor", uid="u_editor")
+        self._login(username="owner")
+        self._upload(filename="report.txt", content=b"v1")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.post(
+            f"/documents/share/{doc_id}", data={"username": "editor", "role": "editor"}
+        )
+        self.client.get("/logout")
+
+        self._login(username="editor")
+        resp = self._upload(filename="report.txt", content=b"v2", doc_id=doc_id)
+        self.assertEqual(resp.status_code, 200)
+
+        doc = encrypted_storage.load_encrypted(f"data/{doc_id}.enc")
+        self.assertEqual(doc["user_id"], "u_owner")
+        self.assertEqual(doc["uploaded_by"], "u_editor")
+        self.assertEqual(doc["version"], 2)
+        self.assertEqual(flask_app.decode_document_bytes(doc), b"v2")
+        self.assertEqual(doc["versions"][0]["version"], 1)
+
+    def test_viewer_cannot_upload_new_version_of_shared_document(self):
+        self._seed_user(username="owner", uid="u_owner")
+        self._seed_user(username="viewer", uid="u_viewer")
+        self._login(username="owner")
+        self._upload(filename="report.txt", content=b"v1")
+        doc_id = self._enc_files()[0].replace(".enc", "")
+        self.client.post(
+            f"/documents/share/{doc_id}", data={"username": "viewer", "role": "viewer"}
+        )
+        self.client.get("/logout")
+
+        self._login(username="viewer")
+        resp = self._upload(filename="report.txt", content=b"v2", doc_id=doc_id)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(
+            b"you do not have permission to upload a new version of this file",
+            resp.data.lower(),
+        )
+
+        doc = encrypted_storage.load_encrypted(f"data/{doc_id}.enc")
+        self.assertEqual(doc["version"], 1)
+        self.assertEqual(flask_app.decode_document_bytes(doc), b"v1")
 
     def test_stranger_cannot_view_document(self):
         self._seed_user(username="owner", uid="u_owner")

@@ -533,6 +533,7 @@ def upload_document():
     if request.method == "POST":
         # Encrypt and store the files
         file = request.files.get("file")
+        target_doc_id = request.form.get("doc_id", "").strip()
         if file:
             # Validate extension and MIME type
             if not allowed_file(file.filename, file.mimetype):
@@ -564,19 +565,76 @@ def upload_document():
             # Check if a doc with the same filename already exists (for versioning)
             existing_doc = None
             existing_enc_path = None
-            for fname in os.listdir("data"):
-                if fname.endswith(".enc"):
-                    try:
-                        d = encrypted_storage.load_encrypted(f"data/{fname}")
-                        if (
-                            d.get("user_id") == current_session["user_id"]
-                            and d.get("filename") == file.filename
-                        ):
-                            existing_doc = d
-                            existing_enc_path = f"data/{fname}"
-                            break
-                    except Exception:
-                        pass
+            if target_doc_id:
+                if not re.match(r"^[a-f0-9\-]{36}$", target_doc_id):
+                    security_log.log_event(
+                        "PATH_TRAVERSAL_ATTEMPT",
+                        current_session["user_id"],
+                        {"doc_id": target_doc_id},
+                        "WARNING",
+                    )
+                    return "Bad request", 400
+
+                base_dir = os.path.abspath("data")
+                existing_enc_path = os.path.abspath(
+                    os.path.join(base_dir, f"{target_doc_id}.enc")
+                )
+                if (
+                    not existing_enc_path.startswith(base_dir)
+                    or not os.path.exists(existing_enc_path)
+                ):
+                    flash("Document not found.")
+                    return redirect(url_for("documents"))
+
+                existing_doc = encrypted_storage.load_encrypted(existing_enc_path)
+                user_id = current_session["user_id"]
+                is_owner = existing_doc.get("user_id") == user_id
+                is_admin = current_session["role"] == "admin"
+                shared_role = existing_doc.get("shared_with", {}).get(user_id)
+                if not is_owner and not is_admin and shared_role != "editor":
+                    security_log.log_event(
+                        "ACCESS_DENIED",
+                        user_id,
+                        {
+                            "doc_id": target_doc_id,
+                            "reason": "Insufficient document role for upload",
+                        },
+                        "WARNING",
+                    )
+                    flash("You do not have permission to upload a new version of this file.")
+                    return redirect(url_for("documents"))
+
+                current_ext = os.path.splitext(existing_doc["filename"])[1].lower()
+                uploaded_ext = os.path.splitext(file.filename)[1].lower()
+                if current_ext != uploaded_ext:
+                    security_log.log_event(
+                        "UPLOAD_REJECTED",
+                        user_id,
+                        {
+                            "filename": file.filename,
+                            "doc_id": target_doc_id,
+                            "reason": "Replacement extension mismatch",
+                        },
+                        "WARNING",
+                    )
+                    flash(
+                        f"Replacement uploads must use the same file type ({current_ext})."
+                    )
+                    return redirect(url_for("documents"))
+            else:
+                for fname in os.listdir("data"):
+                    if fname.endswith(".enc"):
+                        try:
+                            d = encrypted_storage.load_encrypted(f"data/{fname}")
+                            if (
+                                d.get("user_id") == current_session["user_id"]
+                                and d.get("filename") == file.filename
+                            ):
+                                existing_doc = d
+                                existing_enc_path = f"data/{fname}"
+                                break
+                        except Exception:
+                            pass
 
             if existing_doc:
                 # Add current data as a previous version
@@ -590,11 +648,14 @@ def upload_document():
                             "content_type", "application/octet-stream"
                         ),
                         "uploaded_at": existing_doc["uploaded_at"],
-                        "uploaded_by": existing_doc["user_id"],
+                        "uploaded_by": existing_doc.get(
+                            "uploaded_by", existing_doc["user_id"]
+                        ),
                     }
                 )
                 existing_doc["data"] = base64.b64encode(file_data).decode("ascii")
                 existing_doc["uploaded_at"] = datetime.now().isoformat()
+                existing_doc["uploaded_by"] = current_session["user_id"]
                 existing_doc["version"] = existing_doc.get("version", 1) + 1
                 existing_doc["versions"] = versions
                 encrypted_storage.save_encrypted(existing_enc_path, existing_doc)
@@ -603,7 +664,7 @@ def upload_document():
                     "FILE_VERSION_UPLOADED",
                     current_session["user_id"],
                     {
-                        "filename": file.filename,
+                        "filename": existing_doc["filename"],
                         "doc_id": doc_id,
                         "version": existing_doc["version"],
                     },
@@ -625,6 +686,7 @@ def upload_document():
                         "content_type": file.mimetype or "application/octet-stream",
                         "user_id": current_session["user_id"],
                         "uploaded_at": datetime.now().isoformat(),
+                        "uploaded_by": current_session["user_id"],
                         "shared_with": {},  # {user_id: "editor" or "viewer"}
                         "version": 1,
                         "versions": [],  # stores previous versions
@@ -1052,7 +1114,7 @@ def restore_document_version(doc_id, version_number):
             "content_encoding": file_data.get("content_encoding"),
             "content_type": file_data.get("content_type", "application/octet-stream"),
             "uploaded_at": file_data["uploaded_at"],
-            "uploaded_by": file_data["user_id"],
+            "uploaded_by": file_data.get("uploaded_by", file_data["user_id"]),
         }
     )
 
@@ -1062,6 +1124,7 @@ def restore_document_version(doc_id, version_number):
         "content_type", file_data.get("content_type", "application/octet-stream")
     )
     file_data["uploaded_at"] = datetime.now().isoformat()
+    file_data["uploaded_by"] = user_id
     file_data["version"] = current_version + 1
     file_data["versions"] = versions
 

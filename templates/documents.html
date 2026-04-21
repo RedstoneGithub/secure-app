@@ -102,6 +102,11 @@
                         <a href="/documents/view/{{ doc.id }}">Open</a>
                         {% if doc.user_role == "editor" %}
                             | <a href="/documents/download/{{ doc.id }}">Download</a>
+                            | <form method="POST" action="/documents/upload" enctype="multipart/form-data" style="display:inline; margin-left:8px;">
+                                <input type="hidden" name="doc_id" value="{{ doc.id }}">
+                                <input type="file" name="file" required>
+                                <button type="submit">Upload New Version</button>
+                              </form>
                         {% else %}
                             | <em>View only</em>
                         {% endif %}
