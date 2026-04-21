@@ -218,3 +218,6 @@ key.pem
 logs/
 *.log
 presentation/~$CS419_Presentation.pptx
+
+# MacOS
+.DS_Store
