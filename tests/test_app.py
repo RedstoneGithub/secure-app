@@ -805,6 +805,19 @@ class TestInputValidation(BaseTestCase):
         resp = self.client.get("/dashboard")
         self.assertNotIn(b"<script>alert", resp.data)
 
+    def test_admin_dashboard_link_only_shown_to_admins(self):
+        self._seed_user(username="adminuser", uid="u_admin", role="admin")
+        self._login(username="adminuser")
+        admin_resp = self.client.get("/dashboard")
+        self.assertIn(b'/admin/dashboard', admin_resp.data)
+
+        self.client.get("/logout")
+
+        self._seed_user(username="basicuser", uid="u_basic", role="user")
+        self._login(username="basicuser")
+        user_resp = self.client.get("/dashboard")
+        self.assertNotIn(b'/admin/dashboard', user_resp.data)
+
     def test_share_invalid_role_rejected(self):
         self._seed_user(username="owner", uid="u_owner")
         self._seed_user(username="target", uid="u_target")

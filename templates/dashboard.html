@@ -23,6 +23,9 @@
     <nav>
         <a href="/">Home</a> |
         <a href="/documents">Documents</a> |
+        {% if role == "admin" %}
+            <a href="/admin/dashboard">Admin Dashboard</a> |
+        {% endif %}
         <a href="/logout">Logout</a>
     </nav>
 

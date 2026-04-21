@@ -1178,7 +1178,11 @@ def dashboard():
         return redirect(url_for("login"))
 
     access_log.log_event("DASHBOARD_ACCESSED", current_session["user_id"], {})
-    return render_template("dashboard.html", username=current_session["username"])
+    return render_template(
+        "dashboard.html",
+        username=current_session["username"],
+        role=current_session["role"],
+    )
 
 
 @app.route("/change-password", methods=["POST"])
