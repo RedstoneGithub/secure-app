@@ -6,7 +6,7 @@ This folder contains all testing resources for the CS 419 Secure Document Sharin
 
 | File | Description |
 |---|---|
-| `test_app.py` | 137 automated tests covering every rubric section and document workflow |
+| `test_app.py` | 140 automated tests covering every rubric section and document workflow |
 | `MANUAL_TESTING.md` | Step-by-step manual testing guide (browser + terminal) |
 
 ## Running the automated tests
@@ -42,14 +42,14 @@ python -m pytest tests/test_app.py -x -v
 | `TestRegistrationValidation` | A. Authentication — registration | 19 |
 | `TestLogin` | A. Authentication — login | 13 |
 | `TestPasswordChange` | A. Authentication — password change | 3 |
-| `TestAccessControl` | B. Access Control | 18 |
-| `TestInputValidation` | C. Input Validation & Injection | 18 |
+| `TestAccessControl` | B. Access Control | 20 |
+| `TestInputValidation` | C. Input Validation & Injection | 19 |
 | `TestEncryption` | D. Encryption | 4 |
 | `TestSessionManagement` | E. Session Management | 10 |
 | `TestSecurityHeaders` | F. Security Headers | 10 |
 | `TestLogging` | G. Logging & Monitoring | 25 |
 | `TestDocumentFeatures` | Core features | 17 |
-| **Total** | | **137** |
+| **Total** | | **140** |
 
 ## Manual testing
 

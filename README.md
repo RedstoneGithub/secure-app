@@ -107,11 +107,11 @@ CS419-FinalProj/
 
 ## Testing
 
-- Automated coverage: `137` passing tests in `tests/test_app.py`
+- Automated coverage: `140` passing tests in `tests/test_app.py`
 - Manual verification guide: `tests/MANUAL_TESTING.md`
 - Run the suite with `python -m pytest tests/test_app.py -v`
 
-The automated suite covers registration, login, password changes, RBAC, upload validation, encryption, session handling, security headers, audit logging, sharing, deletion, viewing, and version restore/download flows.
+The automated suite covers registration, login, password changes, RBAC, upload validation, encryption, session handling, security headers, audit logging, sharing, deletion, viewing, version restore/download, and editor-upload flows.
 
 ## User Roles
 
@@ -121,7 +121,7 @@ The automated suite covers registration, login, password changes, RBAC, upload v
 | User  | Yes    | Yes*     | Yes   | No       | No           |
 | Guest | No     | No       | No    | No       | No           |
 
-\* Users can download documents they own or are shared with them as editor.
+\* Users can download documents they own or are shared with them as editor. Editors can also upload a new version of a document shared with them (the replacement must keep the original file extension); viewers cannot.
 
 ## Security Controls Summary
 

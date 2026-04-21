@@ -139,11 +139,27 @@ Register an account and select **Guest** as the role. Log in with that account.
 
 **Expected:** Access denied — viewers can only see the file listed, not download it.
 
-### B5. Editor can download
+### B5. Editor can download and upload new versions
 
 Repeat B4 but share as **Editor** instead of Viewer.
 
-**Expected:** Download succeeds.
+**Expected:**
+- Download succeeds.
+- An **Upload New Version** form appears next to the shared document. Uploading a
+  file with the **same extension** as the original creates a new version (version
+  counter increments, previous file is preserved in version history, and the
+  `uploaded_by` of the new version is the editor's user id).
+- Uploading a file with a **different extension** is rejected with the message
+  "Replacement uploads must use the same file type" and an `UPLOAD_REJECTED`
+  event is written to `logs/security.log`.
+
+### B5a. Viewer cannot upload new versions
+
+Repeat B5 but share as **Viewer**.
+
+**Expected:** No Upload New Version form is rendered, and manually POSTing to
+`/documents/upload` with the shared `doc_id` is rejected with a permission error
+and an `ACCESS_DENIED` event in the security log.
 
 ### B6. Non-owner cannot share
 
@@ -422,7 +438,9 @@ for line in lines[-3:]:
 - User B's role shows as "Viewer"
 - Download button is replaced with "View only"
 
-Repeat with **Editor** role — User B should be able to download.
+Repeat with **Editor** role — User B should be able to download **and** upload a
+new version (same-extension only) via the Upload New Version form next to the
+shared document.
 
 ### H4. Sharing restrictions
 
@@ -448,4 +466,4 @@ python -m pytest tests/test_app.py::TestAccessControl -v
 python -m pytest tests/test_app.py -x -v
 ```
 
-All 137 tests should pass.
+All 140 tests should pass.
