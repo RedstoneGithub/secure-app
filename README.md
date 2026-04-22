@@ -23,7 +23,7 @@ A Flask-based web application for securely uploading, encrypting, and sharing co
 
 ```bash
 git clone <repo-url>
-cd CS419-FinalProj
+cd secure-app
 ```
 
 ### 2. Create and activate a virtual environment
@@ -85,7 +85,7 @@ The app starts on `https://0.0.0.0:5000`. Open `https://localhost:5000` in your 
 ## Project Structure
 
 ```
-CS419-FinalProj/
+secure-app/
 ├── app.py              # Main application — routes, auth, encryption, logging
 ├── config.py           # All configuration constants
 ├── requirements.txt    # Python dependencies
@@ -108,7 +108,6 @@ CS419-FinalProj/
 ## Testing
 
 - Automated coverage: `140` passing tests in `tests/test_app.py`
-- Manual verification guide: `tests/MANUAL_TESTING.md`
 - Run the suite with `python -m pytest tests/test_app.py -v`
 
 The automated suite covers registration, login, password changes, RBAC, upload validation, encryption, session handling, security headers, audit logging, sharing, deletion, viewing, version restore/download, and editor-upload flows.
