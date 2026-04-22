@@ -46,9 +46,9 @@ pip install -r requirements.txt
 
 ### 4. TLS certificate
 
-A self-signed `cert.pem` and `key.pem` are included in the repository for convenience. You can use them directly , no extra steps needed.
+The application automatically generates a self-signed `cert.pem` and `key.pem` on first run if they do not already exist.
 
-If you prefer to generate your own:
+If you prefer to generate your own certificate pair manually, you can still use:
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
@@ -89,9 +89,9 @@ secure-app/
 ├── app.py              # Main application — routes, auth, encryption, logging
 ├── config.py           # All configuration constants
 ├── requirements.txt    # Python dependencies
-├── cert.pem            # TLS certificate (self-signed)
-├── key.pem             # TLS private key
-├── secret.key          # Fernet encryption key
+├── cert.pem            # TLS certificate (auto-created on first run if missing)
+├── key.pem             # TLS private key (auto-created on first run if missing)
+├── secret.key          # Fernet encryption key (auto-created on first run)
 ├── data/               # JSON data store (auto-created on first run)
 │   ├── users.json      # User accounts
 │   ├── sessions.json   # Active sessions
@@ -107,7 +107,7 @@ secure-app/
 
 ## Testing
 
-- Automated coverage: `140` passing tests in `tests/test_app.py`
+- Automated coverage: `141` passing tests in `tests/test_app.py`
 - Run the suite with `python -m pytest tests/test_app.py -v`
 
 The automated suite covers registration, login, password changes, RBAC, upload validation, encryption, session handling, security headers, audit logging, sharing, deletion, viewing, version restore/download, and editor-upload flows.

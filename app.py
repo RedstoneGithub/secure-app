@@ -8,8 +8,13 @@ from flask import (
     flash,
     session,
 )
+from cryptography import x509
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 import base64
+import ipaddress
 import json
 import os
 import time
@@ -18,7 +23,7 @@ import uuid
 import bcrypt
 import secrets
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 import config
@@ -280,6 +285,52 @@ def securely_delete_file(path):
         f.flush()
         os.fsync(f.fileno())
     os.remove(path)
+
+
+def ensure_tls_certificates(cert_path="cert.pem", key_path="key.pem"):
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        return
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "CS 419 Secure App"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        ]
+    )
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName("localhost"),
+                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                ]
+            ),
+            critical=False,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+
+    with open(key_path, "wb") as key_file:
+        key_file.write(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+
+    with open(cert_path, "wb") as cert_file:
+        cert_file.write(certificate.public_bytes(serialization.Encoding.PEM))
 
 
 def create_session(user):
@@ -1365,4 +1416,5 @@ os.makedirs("data", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
 if __name__ == "__main__":
+    ensure_tls_certificates()
     app.run(ssl_context=("cert.pem", "key.pem"), host="0.0.0.0", port=5000)

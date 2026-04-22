@@ -1440,6 +1440,27 @@ class TestDocumentFeatures(BaseTestCase):
         self.assertTrue(_has_event(self.access_log_file, "DOCUMENT_DELETED"))
 
 
+class TestTlsCertificateGeneration(unittest.TestCase):
+    def test_missing_tls_files_are_generated(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            cert_path = os.path.join(tmp, "cert.pem")
+            key_path = os.path.join(tmp, "key.pem")
+
+            flask_app.ensure_tls_certificates(cert_path=cert_path, key_path=key_path)
+
+            self.assertTrue(os.path.exists(cert_path))
+            self.assertTrue(os.path.exists(key_path))
+
+            with open(cert_path, "rb") as cert_file:
+                self.assertIn(b"BEGIN CERTIFICATE", cert_file.read())
+
+            with open(key_path, "rb") as key_file:
+                self.assertIn(b"BEGIN RSA PRIVATE KEY", key_file.read())
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     unittest.main(verbosity=2)
