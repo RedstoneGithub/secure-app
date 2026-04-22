@@ -7,7 +7,6 @@ This folder contains all testing resources for the CS 419 Secure Document Sharin
 | File | Description |
 |---|---|
 | `test_app.py` | 140 automated tests covering every rubric section and document workflow |
-| `MANUAL_TESTING.md` | Step-by-step manual testing guide (browser + terminal) |
 
 ## Running the automated tests
 
@@ -50,8 +49,3 @@ python -m pytest tests/test_app.py -x -v
 | `TestLogging` | G. Logging & Monitoring | 25 |
 | `TestDocumentFeatures` | Core features | 17 |
 | **Total** | | **140** |
-
-## Manual testing
-
-See [MANUAL_TESTING.md](MANUAL_TESTING.md) for step-by-step instructions to
-verify each requirement by hand in the browser and terminal.
